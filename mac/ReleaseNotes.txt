@@ -1,4 +1,4 @@
-Check for updates from GitHub directly in the app.
-Download, verify, install and relaunch from App updates.
-Your boards are saved before updating; failed verification keeps your current app.
-Pasteboard remains a work in progress. Keep a backup of important boards.
+Faster canvas panning reuses group outlines, labels, guides and image previews.
+The Swift code has consistent formatting and clearer updater modules.
+GitHub updates, download verification and rollback remain built in.
+Pasteboard is still an early preview. Keep a backup of important boards.

@@ -1,68 +1,183 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f7f7f5">
-  <meta name="description" content="Pasteboard is a visual worktable for Mac. Collect images, notes and colours on an infinite board. Download the early preview.">
-  <title>Pasteboard — A visual worktable for Mac</title>
-  <link rel="icon" href="assets/pasteboard-icon.png" type="image/png">
-  <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
-</head>
-<body>
-  <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header wrap">
-    <a class="wordmark" href="#" aria-label="Pasteboard home"><img src="assets/pasteboard-icon.png" width="38" height="38" alt="">Pasteboard</a>
-    <nav aria-label="Main navigation">
-      <button class="preview-link" data-preview>Work in progress</button>
-      <a class="nav-download" href="#download">Get the Mac app</a>
-    </nav>
-  </header>
-  <main id="main">
-    <section class="hero wrap" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">A visual worktable for Mac</p>
-        <h1 id="hero-title">A place for all<br>the good bits.</h1>
-        <p class="hero-description">That image. A passing thought. Just the right colour.<br class="desktop-break"> Paste them onto an infinite board and see what comes together.</p>
-        <div class="hero-actions"><a class="button primary" href="#download">Try Pasteboard for Mac</a><span>Early preview. A little unfinished.</span></div>
-      </div>
-      <figure class="app-preview">
-        <img src="assets/pasteboard-board.png" width="1220" height="580" alt="The Pasteboard Mac app with a sample board of artwork, text notes and three colour swatches.">
-        <figcaption>A few references, a thought or two, and room to see what connects.</figcaption>
-      </figure>
-    </section>
-    <section class="features wrap" aria-labelledby="features-title">
-      <div class="section-heading"><p class="eyebrow">Less setting up. More laying out.</p><h2 id="features-title">Keep your ideas<br>in good company.</h2></div>
-      <div class="feature-list">
-        <article><h3>Bring the interesting bits.</h3><p>Paste images, text, SVG artwork and HEX colours. Transparent images keep their transparent backgrounds.</p></article>
-        <article><h3>Make a little sense of it.</h3><p>Move, crop, resize and group. Alignment and spacing guides help things fall into place. Pages keep different directions together.</p></article>
-        <article><h3>Keep it close. Take it with you.</h3><p>Your boards save locally on your Mac, with automatic backups. Export a board or selection as a PNG or PDF when it’s ready to leave.</p></article>
-      </div>
-    </section>
-    <section class="download-section" id="download" aria-labelledby="download-title">
-      <div class="download-layout wrap">
-        <div><img class="download-icon" src="assets/pasteboard-icon.png" width="92" height="92" alt=""><p class="eyebrow">The Mac app</p><h2 id="download-title">Ready for a<br>little pasting?</h2><p>There’s plenty here to play with.<br>And plenty we’re still polishing.</p></div>
-        <div class="download-details">
-          <div class="release-heading"><h3>Pasteboard <span data-version>0.17.0</span></h3><span class="release-tag">Early preview</span></div>
-          <p class="requirements">Apple Silicon Mac · macOS 13 or later<br>Free preview · <span data-download-size>Mac ZIP</span></p>
-          <a class="button primary download-button" href="https://github.com/leolunelove/pasteboard/releases/latest/download/Pasteboard-Mac.zip" download="Pasteboard-Mac.zip">Download for Mac</a>
-          <p class="install-note">Unzip the download and open <strong>Pasteboard.app</strong>. You can move it to Applications.</p>
-          <div class="preview-note"><h4>Still a work in progress.</h4><p>This is a development build, signed locally and not yet notarized by Apple. macOS may prevent it from opening. Keep a separate backup of important boards while we refine the app.</p></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f7f5" />
+    <meta
+      name="description"
+      content="Pasteboard is a visual worktable for Mac. Collect images, notes and colours on an infinite board. Download the early preview."
+    />
+    <title>Pasteboard — A visual worktable for Mac</title>
+    <link rel="icon" href="assets/pasteboard-icon.png" type="image/png" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header wrap">
+      <a class="wordmark" href="#" aria-label="Pasteboard home"
+        ><img
+          src="assets/pasteboard-icon.png"
+          width="38"
+          height="38"
+          alt=""
+        />Pasteboard</a
+      >
+      <nav aria-label="Main navigation">
+        <a class="nav-download" href="https://github.com/leolunelove/pasteboard"
+          >GitHub</a
+        >
+        <button class="preview-link" data-preview>Work in progress</button>
+        <a class="nav-download" href="#download">Get the Mac app</a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">A visual worktable for Mac</p>
+          <h1 id="hero-title">A place for all<br />the good bits.</h1>
+          <p class="hero-description">
+            That image. A passing thought. Just the right colour.<br
+              class="desktop-break"
+            />
+            Paste them onto an infinite board and see what comes together.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#download">Try Pasteboard for Mac</a
+            ><span>Early preview. A little unfinished.</span>
+          </div>
         </div>
-      </div>
-    </section>
-  </main>
-  <footer class="site-footer wrap"><a class="wordmark" href="#"><img src="assets/pasteboard-icon.png" width="30" height="30" alt="">Pasteboard</a><p>A visual worktable. A work in progress.</p><button class="text-button" data-preview>About this preview</button></footer>
-  <dialog id="preview-notice" aria-labelledby="notice-title" aria-describedby="notice-description">
-    <form method="dialog">
-      <img src="assets/pasteboard-icon.png" width="64" height="64" alt="">
-      <p class="eyebrow">A small heads-up</p>
-      <h2 id="notice-title">A work in progress.<br>A place to start.</h2>
-      <div id="notice-description"><p>Pasteboard is an early preview. We’re still building, refining and smoothing the edges.</p><p>You can download the Mac app and try it now. Expect a few rough edges, and keep a backup of anything important.</p></div>
-      <button class="button primary" autofocus>Take a look</button>
-      <p class="dialog-footnote">No account needed in the Mac app. Your boards stay on your Mac.</p>
-    </form>
-  </dialog>
-</body>
+        <figure class="app-preview">
+          <img
+            src="assets/pasteboard-board.png"
+            width="1220"
+            height="580"
+            alt="The Pasteboard Mac app with a sample board of artwork, text notes and three colour swatches."
+          />
+          <figcaption>
+            A few references, a thought or two, and room to see what connects.
+          </figcaption>
+        </figure>
+      </section>
+      <section class="features wrap" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">Less setting up. More laying out.</p>
+          <h2 id="features-title">Keep your ideas<br />in good company.</h2>
+        </div>
+        <div class="feature-list">
+          <article>
+            <h3>Bring the interesting bits.</h3>
+            <p>
+              Paste images, text, SVG artwork and HEX colours. Transparent
+              images keep their transparent backgrounds.
+            </p>
+          </article>
+          <article>
+            <h3>Make a little sense of it.</h3>
+            <p>
+              Move, crop, resize and group. Alignment and spacing guides help
+              things fall into place. Pages keep different directions together.
+            </p>
+          </article>
+          <article>
+            <h3>Keep it close. Take it with you.</h3>
+            <p>
+              Your boards save locally on your Mac, with automatic backups.
+              Export a board or selection as a PNG or PDF when it’s ready to
+              leave.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section
+        class="download-section"
+        id="download"
+        aria-labelledby="download-title"
+      >
+        <div class="download-layout wrap">
+          <div>
+            <img
+              class="download-icon"
+              src="assets/pasteboard-icon.png"
+              width="92"
+              height="92"
+              alt=""
+            />
+            <p class="eyebrow">The Mac app</p>
+            <h2 id="download-title">Ready for a<br />little pasting?</h2>
+            <p>
+              There’s plenty here to play with.<br />And plenty we’re still
+              polishing.
+            </p>
+          </div>
+          <div class="download-details">
+            <div class="release-heading">
+              <h3>Pasteboard <span data-version>0.17.1</span></h3>
+              <span class="release-tag">Early preview</span>
+            </div>
+            <p class="requirements">
+              Apple Silicon Mac · macOS 13 or later<br />Free preview ·
+              <span data-download-size>Mac ZIP</span>
+            </p>
+            <a
+              class="button primary download-button"
+              href="https://github.com/leolunelove/pasteboard/releases/latest/download/Pasteboard-Mac.zip"
+              download="Pasteboard-Mac.zip"
+              >Download for Mac</a
+            >
+            <p class="install-note">
+              Unzip the download and open <strong>Pasteboard.app</strong>. You
+              can move it to Applications.
+            </p>
+            <div class="preview-note">
+              <h4>Still a work in progress.</h4>
+              <p>
+                This is a development build, signed locally and not yet
+                notarized by Apple. macOS may prevent it from opening. Keep a
+                separate backup of important boards while we refine the app.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="#"
+        ><img
+          src="assets/pasteboard-icon.png"
+          width="30"
+          height="30"
+          alt=""
+        />Pasteboard</a
+      >
+      <p>A visual worktable. A work in progress.</p>
+      <button class="text-button" data-preview>About this preview</button>
+    </footer>
+    <dialog
+      id="preview-notice"
+      aria-labelledby="notice-title"
+      aria-describedby="notice-description"
+    >
+      <form method="dialog">
+        <img src="assets/pasteboard-icon.png" width="64" height="64" alt="" />
+        <p class="eyebrow">A small heads-up</p>
+        <h2 id="notice-title">A work in progress.<br />A place to start.</h2>
+        <div id="notice-description">
+          <p>
+            Pasteboard is an early preview. We’re still building, refining and
+            smoothing the edges.
+          </p>
+          <p>
+            You can download the Mac app and try it now. Expect a few rough
+            edges, and keep a backup of anything important.
+          </p>
+        </div>
+        <button class="button primary" autofocus>Take a look</button>
+        <p class="dialog-footnote">
+          No account needed in the Mac app. Your boards stay on your Mac.
+        </p>
+      </form>
+    </dialog>
+  </body>
 </html>

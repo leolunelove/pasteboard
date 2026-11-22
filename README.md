@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="100" alt="Pasteboard icon">
+  <img src="website/assets/pasteboard-icon.png" width="100" alt="Pasteboard icon">
 </p>
 
 <h1 align="center">Pasteboard</h1>
@@ -14,7 +14,7 @@
 
 <p align="center">Apple Silicon · macOS 13 or later · Early preview</p>
 
-![A Pasteboard board with artwork, notes and colour swatches](assets/board.png)
+![A Pasteboard board with artwork, notes and colour swatches](website/assets/pasteboard-board.png)
 
 Paste images, notes and colours onto an infinite board. Move things around, collect a few references, and see what comes together.
 
@@ -47,17 +47,17 @@ Checking GitHub requires an internet connection. Checks are initiated from the u
 
 ## Handy keys
 
-| Action | Shortcut |
-| --- | --- |
-| Paste | ⌘V |
-| Add a note / colour swatch | T / S |
-| Pan | Space + drag, or two-finger scroll |
-| Zoom | Pinch, or ⌘+ / ⌘− |
-| Fit the board | ⌘0 |
-| Next / previous item or group | Tab / Shift-Tab |
-| Group / ungroup | ⌘G / ⇧⌘G |
-| Search | ⌘F |
-| Undo / redo | ⌘Z / ⇧⌘Z |
+| Action                        | Shortcut                           |
+| ----------------------------- | ---------------------------------- |
+| Paste                         | ⌘V                                 |
+| Add a note / colour swatch    | T / S                              |
+| Pan                           | Space + drag, or two-finger scroll |
+| Zoom                          | Pinch, or ⌘+ / ⌘−                  |
+| Fit the board                 | ⌘0                                 |
+| Next / previous item or group | Tab / Shift-Tab                    |
+| Group / ungroup               | ⌘G / ⇧⌘G                           |
+| Search                        | ⌘F                                 |
+| Undo / redo                   | ⌘Z / ⇧⌘Z                           |
 
 ## Build locally
 
@@ -72,12 +72,17 @@ There are no third-party runtime dependencies. The app uses Swift, AppKit and na
 
 After building, run `./scripts/test-updates.sh` to verify remote-update metadata, failed downloads, checksums, archive restrictions, app validation, installation and rollback using disposable app copies.
 
+Run `./scripts/test-canvas.sh` to check retained panning, group locking, zoom and guide geometry. `./scripts/test-canvas.sh --benchmark` prints the median time in milliseconds for 1,000 retained canvas updates with an 800-card fixture; it excludes drawing and screen refresh.
+
+Swift formatting is defined in `.swift-format`. Apply it with `xcrun swift-format format --in-place --recursive mac/Source tests`. Updater metadata, HTTPS transfer, installation and window presentation live in separate modules.
+
+Run `./scripts/test-core.sh` to check spacing, pages, backup restoration, cropping, navigation, minimap controls, SVG handling and swatches.
+
 ## Project layout
 
 ```text
 mac/         Native Mac app, build script and release notes
 website/     Static website source
-assets/      App icon and demonstration board
 scripts/     Release packaging helper
 ```
 

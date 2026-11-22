@@ -1,4 +1,4 @@
-PASTEBOARD 0.17.0
+PASTEBOARD 0.17.1
 A visual worktable for Mac.
 
 WORK IN PROGRESS
