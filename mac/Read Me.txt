@@ -1,0 +1,29 @@
+PASTEBOARD 0.17.0
+A visual worktable for Mac.
+
+WORK IN PROGRESS
+This is an early preview. Expect rough edges, and keep a separate backup of
+important boards. The app is locally signed, not Apple-notarized.
+
+OPEN
+Download Pasteboard-Mac.zip from GitHub Releases, unzip it, and move
+Pasteboard.app to a writable Applications folder. Requires an Apple Silicon
+Mac running macOS 13 or later. No account is needed in the app.
+
+UPDATE
+Choose Pasteboard > Check for Updates, or App updates in the sidebar.
+Update and Relaunch downloads the official GitHub release, verifies its ZIP
+checksum and app identity, saves your boards, installs, and relaunches.
+A failed verification leaves the installed app unchanged. The installer
+restores the previous app if it cannot launch the replacement.
+Checking and downloading updates requires an internet connection.
+
+YOUR BOARDS
+Boards and images save locally on your Mac. Automatic local backups and
+portable board export are available in the app. Existing Gather boards remain
+compatible; the storage folder and portable document extension retain their
+original names so existing data does not need moving.
+
+SOURCE AND RELEASES
+https://github.com/leolunelove/pasteboard
+https://pasteboard.leolunelove.chatgpt.site/

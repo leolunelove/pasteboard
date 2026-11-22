@@ -1,0 +1,4 @@
+Check for updates from GitHub directly in the app.
+Download, verify, install and relaunch from App updates.
+Your boards are saved before updating; failed verification keeps your current app.
+Pasteboard remains a work in progress. Keep a backup of important boards.

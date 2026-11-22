@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Pasteboard</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Pasteboard document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>fun.leolune.gather.board</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>Pasteboard</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>fun.leolune.gather</string>
+	<key>CFBundleName</key>
+	<string>Pasteboard</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.17.0</string>
+	<key>CFBundleVersion</key>
+	<string>19</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Pasteboard · A visual worktable for Mac.</string>
+	<key>PasteboardReleaseURL</key>
+	<string>https://github.com/leolunelove/pasteboard/releases</string>
+	<key>PasteboardUpdateFeedURL</key>
+	<string>https://github.com/leolunelove/pasteboard/releases/latest/download/Pasteboard-Update.json</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Pasteboard document</string>
+			<key>UTTypeIdentifier</key>
+			<string>fun.leolune.gather.board</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gatherboard</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
