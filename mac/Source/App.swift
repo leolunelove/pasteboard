@@ -10,11 +10,15 @@ final class Surface: NSView {
         layer?.backgroundColor = color.cgColor
     }
     required init?(coder: NSCoder) { fatalError() }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = fill.cgColor }
+    }
 }
 
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
-final class BoardButton: NSButton {
+final class BoardButton: PasteboardHoverButton {
     var active = false
     var isPage = false
     var rename: (() -> Void)?
@@ -25,6 +29,9 @@ final class BoardButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         if active {
             NSColor.pasteboardSelection.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+        } else if hovering {
+            NSColor.pasteboardSurface.withAlphaComponent(0.7).setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
         }
         if dropTarget {
@@ -63,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let statusLabel = NSTextField(labelWithString: "Saved on this Mac")
     var zoomButton: NSButton!
     var groupButton: NSButton!
+    private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
     private var sidebarSignature = ""
     private var revealedSidebarBoard: UUID?
@@ -90,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.appearance = NSAppearance(named: .aqua)
+        PasteboardAppearance.current.apply()
         makeMenus()
         window = NSWindow(
             contentRect: CGRect(x: 0, y: 0, width: 1220, height: 820),
@@ -288,8 +296,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         rows.spacing = 5
         rows.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(rows)
-        let local = label("Saved on this Mac", size: 11, weight: .medium, color: .pasteboardInk)
-        let privacy = label("Your boards save automatically.", size: 10, color: .pasteboardMuted)
+        let appearanceLabel = label("Appearance", size: 10, weight: .medium, color: .pasteboardMuted)
+        appearancePicker.addItems(withTitles: PasteboardAppearance.allCases.map(\.title))
+        appearancePicker.selectItem(at: PasteboardAppearance.allCases.firstIndex(of: .current) ?? 0)
+        appearancePicker.target = self
+        appearancePicker.action = #selector(changeAppearance(_:))
+        appearancePicker.font = .systemFont(ofSize: 11)
+        appearancePicker.controlSize = .small
+        appearancePicker.setAccessibilityLabel("Appearance")
+        appearancePicker.toolTip = "Follow your Mac, or choose Light or Dark"
+        appearancePicker.translatesAutoresizingMaskIntoConstraints = false
         let updates = NSButton(title: "App updates", target: self, action: #selector(showUpdates(_:)))
         let search = NSButton(title: "Search boards", target: self, action: #selector(showSearch(_:)))
         let backups = NSButton(title: "Local backups", target: self, action: #selector(showBackups(_:)))
@@ -308,7 +324,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updates.imagePosition = .imageLeading
         updates.toolTip = "Check your version and find the latest Pasteboard build"
         updates.translatesAutoresizingMaskIntoConstraints = false
-        for view in [mark, brand, subtitle, section, plus, scroll, search, backups, updates, local, privacy] {
+        for view in [
+            mark, brand, subtitle, section, plus, scroll, search, backups, updates, appearanceLabel,
+            appearancePicker,
+        ] {
             sidebar.addSubview(view)
         }
         NSLayoutConstraint.activate([
@@ -343,13 +362,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             rows.trailingAnchor.constraint(equalTo: document.trailingAnchor),
             rows.topAnchor.constraint(equalTo: document.topAnchor),
             rows.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            local.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
-            local.bottomAnchor.constraint(equalTo: privacy.topAnchor, constant: -5),
+            appearanceLabel.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
+            appearanceLabel.bottomAnchor.constraint(equalTo: appearancePicker.topAnchor, constant: -6),
             updates.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
-            updates.bottomAnchor.constraint(equalTo: local.topAnchor, constant: -18),
+            updates.bottomAnchor.constraint(equalTo: appearanceLabel.topAnchor, constant: -18),
             updates.heightAnchor.constraint(equalToConstant: 24),
-            privacy.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
-            privacy.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -23),
+            appearancePicker.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
+            appearancePicker.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -25),
+            appearancePicker.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -21),
         ])
     }
 
@@ -418,7 +438,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let help = label("Tab to find items  ·  Space + drag to pan", size: 10, color: .pasteboardMuted)
         let minus = NSButton(title: "−", target: self, action: #selector(zoomOut(_:)))
         let plus = NSButton(title: "+", target: self, action: #selector(zoomIn(_:)))
-        zoomButton = NSButton(title: "100%", target: self, action: #selector(resetZoom(_:)))
+        zoomButton = NSButton(title: "100%", target: self, action: #selector(showZoomMenu(_:)))
+        zoomButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 8, weight: .semibold))
+        zoomButton.imagePosition = .imageTrailing
+        zoomButton.toolTip = "Zoom presets, Fit Board and Fit Selection"
+        zoomButton.setAccessibilityLabel("Zoom")
         let fit = NSButton(
             image: NSImage(
                 systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "Fit Board")!,
@@ -448,7 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             plus.widthAnchor.constraint(equalToConstant: 24),
             zoomButton.trailingAnchor.constraint(equalTo: plus.leadingAnchor, constant: -2),
             zoomButton.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-            zoomButton.widthAnchor.constraint(equalToConstant: 49),
+            zoomButton.widthAnchor.constraint(equalToConstant: 64),
             minus.trailingAnchor.constraint(equalTo: zoomButton.leadingAnchor, constant: -2),
             minus.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
             minus.widthAnchor.constraint(equalToConstant: 24),
@@ -612,7 +637,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         for row in sidebarTargets { row.2.dropTarget = false }
         transferBadge.removeFromSuperview()
     }
-    func updateViewport() { zoomButton?.title = "\(Int((store.board.zoom * 100).rounded()))%" }
+    func updateViewport() {
+        let title = "\(Int((store.board.zoom * 100).rounded()))%"
+        if zoomButton?.title != title {
+            zoomButton?.title = title
+            zoomButton?.setAccessibilityValue(title)
+        }
+    }
+    @objc func showZoomMenu(_ sender: Any?) {
+        canvas.finishEditing()
+        let menu = NSMenu(title: "Zoom")
+        for percent in [25, 50, 75, 100, 125, 150, 200, 400] {
+            let item = menu.addItem(
+                withTitle: "\(percent)%", action: #selector(chooseZoom(_:)), keyEquivalent: "")
+            item.tag = percent
+            item.target = self
+            item.state = abs(canvas.zoom - Double(percent) / 100) < 0.005 ? .on : .off
+        }
+        menu.addItem(.separator())
+        let board = menu.addItem(
+            withTitle: "Fit Board", action: #selector(BoardView.fitAll(_:)), keyEquivalent: "")
+        board.target = canvas
+        let selection = menu.addItem(
+            withTitle: "Fit Selection", action: #selector(BoardView.fitSelection(_:)), keyEquivalent: "")
+        selection.target = canvas
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: zoomButton.bounds.maxY + 7), in: zoomButton)
+    }
+    @objc func chooseZoom(_ sender: NSMenuItem) { canvas.animateZoom(to: Double(sender.tag) / 100) }
+
+    @objc func changeAppearance(_ sender: Any?) {
+        let mode: PasteboardAppearance?
+        if let item = sender as? NSMenuItem, let value = item.representedObject as? String {
+            mode = PasteboardAppearance(rawValue: value)
+        } else {
+            mode =
+                PasteboardAppearance.allCases.indices.contains(appearancePicker.indexOfSelectedItem)
+                ? PasteboardAppearance.allCases[appearancePicker.indexOfSelectedItem] : nil
+        }
+        guard let mode else { return }
+        mode.select()
+        appearancePicker.selectItem(at: PasteboardAppearance.allCases.firstIndex(of: mode) ?? 0)
+        window.backgroundColor = .pasteboardCanvas
+        window.contentView?.needsDisplay = true
+        canvas.needsDisplay = true
+        window.makeFirstResponder(canvas)
+    }
 
     private func targetID(_ sender: Any?) -> UUID? {
         if let button = sender as? NSButton, let value = button.identifier?.rawValue {
@@ -835,6 +904,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         UserDefaults.standard.set(canvas.snappingEnabled, forKey: "SnapToObjects")
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(changeAppearance(_:)) {
+            menuItem.state =
+                (menuItem.representedObject as? String) == PasteboardAppearance.current.rawValue ? .on : .off
+        }
         if menuItem.action == #selector(toggleMinimap(_:)) {
             menuItem.state = canvas.minimapEnabled ? .on : .off
         }
@@ -973,13 +1046,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(edit, "Edit Source Link…", #selector(BoardView.editSource(_:)), target: canvas)
         item(edit, "Open Source", #selector(BoardView.openSource(_:)), target: canvas)
         item(edit, "Search Boards…", #selector(showSearch(_:)), "f", target: self)
+        let arrangeItem = NSMenuItem()
+        arrangeItem.submenu = canvas.arrangementMenu()
+        main.addItem(arrangeItem)
         let view = menu("View")
+        let appearance = NSMenu(title: "Appearance")
+        let appearanceItem = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
+        appearanceItem.submenu = appearance
+        view.addItem(appearanceItem)
+        for mode in PasteboardAppearance.allCases {
+            let option = item(appearance, mode.title, #selector(changeAppearance(_:)), target: self)
+            option.representedObject = mode.rawValue
+        }
+        view.addItem(.separator())
         item(view, "Show Minimap", #selector(toggleMinimap(_:)), target: self)
         view.addItem(.separator())
         item(view, "Zoom In", #selector(zoomIn(_:)), "=", target: self)
         item(view, "Zoom Out", #selector(zoomOut(_:)), "-", target: self)
         item(view, "Actual Size", #selector(resetZoom(_:)), "1", target: self)
         item(view, "Fit Board", #selector(BoardView.fitAll(_:)), "0", target: canvas)
+        item(
+            view, "Fit Selection", #selector(BoardView.fitSelection(_:)), "0", [.command, .shift],
+            target: canvas)
         view.addItem(.separator())
         item(view, "Snap to Objects", #selector(toggleSnapping(_:)), target: self)
         view.addItem(.separator())
@@ -999,6 +1087,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         canvas.finishEditing()
         return saveBeforeLeaving()
     }
+    func windowDidResignKey(_ notification: Notification) { canvas.deactivateInteraction() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         canvas.finishEditing()
         if canvas.hasPendingImports {
@@ -1021,6 +1110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return saveBeforeLeaving() ? .terminateNow : .terminateCancel
     }
     func saveBeforeLeaving() -> Bool {
+        canvas.cancelPointerInteraction()
         canvas.cancelCropping(nil)
         store.backupNow()
         if store.save() { return true }

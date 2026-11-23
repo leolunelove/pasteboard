@@ -1,14 +1,18 @@
 import AppKit
 import CoreText
 
-struct MinimapGeometry {
+struct MinimapGeometry: Equatable {
     let worldBounds: CGRect
     let frame: CGRect
     let scale: CGFloat
 
     init?(cards: [Card], viewport: CGRect, area: CGRect) {
+        self.init(
+            contentBounds: cards.reduce(CGRect.null) { $0.union($1.rect) }, viewport: viewport, area: area)
+    }
+    init?(contentBounds: CGRect, viewport: CGRect, area: CGRect) {
         guard viewport.width > 0, viewport.height > 0, area.width > 0, area.height > 0 else { return nil }
-        let extent = cards.reduce(viewport) { $0.union($1.rect) }
+        let extent = contentBounds.union(viewport)
         let padding = max(1, max(extent.width, extent.height) * 0.06)
         worldBounds = extent.insetBy(dx: -padding, dy: -padding)
         scale = min(area.width / worldBounds.width, area.height / worldBounds.height)
@@ -41,6 +45,16 @@ final class BoardMinimap: NSView {
     private var dragGeometry: MinimapGeometry?
     private var dragBoardID: UUID?
     private var grabOffset = CGPoint.zero
+    private var extentCards: [Card] = []
+    private var contentBounds = CGRect.null
+    private var artworkCards: [Card] = []
+    private var artworkSelection = Set<UUID>()
+    private var artworkGeometry: MinimapGeometry?
+    private var artworkDark: Bool?
+    private var fills: [(CGPath, CGColor)] = []
+    private var normalOutline = CGMutablePath()
+    private var selectedOutline = CGMutablePath()
+    private(set) var artworkGeneration = 0
     override var isFlipped: Bool { true }
     var mapArea: CGRect {
         CGRect(x: 12, y: 30, width: max(0, bounds.width - 24), height: max(0, bounds.height - 54))
@@ -53,7 +67,12 @@ final class BoardMinimap: NSView {
     }
     var geometry: MinimapGeometry? {
         if dragBoardID == canvas.store.board.id, let dragGeometry { return dragGeometry }
-        return MinimapGeometry(cards: canvas.store.board.cards, viewport: viewport, area: mapArea)
+        let cards = canvas.store.board.cards
+        if cards != extentCards {
+            contentBounds = cards.reduce(CGRect.null) { $0.union($1.rect) }
+            extentCards = cards
+        }
+        return MinimapGeometry(contentBounds: contentBounds, viewport: viewport, area: mapArea)
     }
 
     init(canvas: BoardView) {
@@ -72,6 +91,10 @@ final class BoardMinimap: NSView {
             "Board minimap. Click or drag to navigate. Tab on the board cycles through items.")
     }
     required init?(coder: NSCoder) { fatalError() }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
     override func resetCursorRects() { addCursorRect(mapArea, cursor: .openHand) }
     override func draw(_ dirtyRect: NSRect) {
         if let context = NSGraphicsContext.current?.cgContext { render(in: context) }
@@ -116,22 +139,20 @@ final class BoardMinimap: NSView {
         guard let geometry else { return }
         context.saveGState()
         context.clip(to: mapArea)
-        for card in canvas.store.board.cards {
-            let raw = geometry.project(card.rect)
-            let rect = CGRect(
-                x: raw.midX - max(2, raw.width) / 2, y: raw.midY - max(2, raw.height) / 2,
-                width: max(2, raw.width), height: max(2, raw.height))
-            let fill =
-                card.hex.flatMap { SwatchColor($0)?.color }
-                ?? (card.text != nil ? canvas.noteColor(card.tone).cgColor : NSColor(hex: 0xB2BAC9).cgColor)
-            context.setFillColor(fill)
-            context.fill(rect)
-            context.setStrokeColor(
-                (canvas.selection.contains(card.id) ? NSColor.pasteboardAccent : NSColor(hex: 0xADB3BE))
-                    .cgColor)
-            context.setLineWidth(canvas.selection.contains(card.id) ? 1.5 : 0.5)
-            context.stroke(rect)
+        updateArtwork(geometry)
+        for (path, color) in fills {
+            context.addPath(path)
+            context.setFillColor(color)
+            context.fillPath()
         }
+        context.addPath(normalOutline)
+        context.setStrokeColor(NSColor.pasteboardMuted.withAlphaComponent(0.6).cgColor)
+        context.setLineWidth(0.5)
+        context.strokePath()
+        context.addPath(selectedOutline)
+        context.setStrokeColor(NSColor.pasteboardAccent.cgColor)
+        context.setLineWidth(1.5)
+        context.strokePath()
         let raw = geometry.project(viewport)
         let view = CGRect(
             x: raw.midX - max(4, raw.width) / 2, y: raw.midY - max(4, raw.height) / 2,
@@ -142,6 +163,37 @@ final class BoardMinimap: NSView {
         context.setLineWidth(1.5)
         context.stroke(view)
         context.restoreGState()
+    }
+
+    private func updateArtwork(_ geometry: MinimapGeometry) {
+        let cards = canvas.store.board.cards
+        let dark = effectiveAppearance.isPasteboardDark
+        guard
+            artworkCards != cards || artworkSelection != canvas.selection || artworkGeometry != geometry
+                || artworkDark != dark
+        else { return }
+        artworkCards = cards
+        artworkSelection = canvas.selection
+        artworkGeometry = geometry
+        artworkDark = dark
+        artworkGeneration += 1
+        var paths: [String: (CGMutablePath, CGColor)] = [:]
+        normalOutline = CGMutablePath()
+        selectedOutline = CGMutablePath()
+        for card in cards {
+            let raw = geometry.project(card.rect)
+            let rect = CGRect(
+                x: raw.midX - max(2, raw.width) / 2, y: raw.midY - max(2, raw.height) / 2,
+                width: max(2, raw.width), height: max(2, raw.height))
+            let key = card.hex ?? (card.text != nil ? "note-\(card.tone)" : "image")
+            let fill =
+                card.hex.flatMap { SwatchColor($0)?.color }
+                ?? (card.text != nil ? canvas.noteColor(card.tone).cgColor : NSColor(hex: 0xB2BAC9).cgColor)
+            if paths[key] == nil { paths[key] = (CGMutablePath(), fill) }
+            paths[key]?.0.addRect(rect)
+            (canvas.selection.contains(card.id) ? selectedOutline : normalOutline).addRect(rect)
+        }
+        fills = paths.keys.sorted().compactMap { paths[$0].map { ($0.0, $0.1) } }
     }
 
     override func mouseDown(with event: NSEvent) {

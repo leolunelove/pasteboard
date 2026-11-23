@@ -37,7 +37,9 @@ func collectionFeaturesTest(directory: URL) throws {
     view.deleteSelection(nil)
     view.ungroupSelection(nil)
     view.startEditing(note.id)
-    try check(store.board.cards == protected && !view.canGroup && !view.canUngroup && view.subviews.isEmpty)
+    try check(
+        store.board.cards == protected && !view.canGroup && !view.canUngroup
+            && !view.subviews.contains { $0 is NSTextView })
     let arrow = NSEvent.keyEvent(
         with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
         characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 124)!
@@ -152,6 +154,9 @@ func collectionFeaturesTest(directory: URL) throws {
     var workspace = Workspace(boards: [Board(name: "Saved", cards: [imageCard])], active: nil)
     let now = Date()
     try manager.capture(workspace, now: now)
+    try check(manager.records().count == 1)
+    let reopened = LocalBackups(directory: manager.directory)
+    try reopened.capture(workspace, now: now.addingTimeInterval(301))
     try check(manager.records().count == 1)
     workspace.boards[0].offsetX += 10
     try manager.capture(workspace, now: now.addingTimeInterval(301))

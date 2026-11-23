@@ -12,6 +12,7 @@ final class CanvasScene {
         let outline = CAShapeLayer()
         let grip = CAShapeLayer()
         let lock = CATextLayer()
+        let placeholder = CATextLayer()
         var card: Card?
         var selected = false
         var preview: CGImage?
@@ -31,6 +32,11 @@ final class CanvasScene {
             text.isWrapped = true
             text.truncationMode = .none
             content.addSublayer(text)
+            placeholder.alignmentMode = .center
+            placeholder.isWrapped = true
+            placeholder.truncationMode = .end
+            placeholder.isHidden = true
+            content.addSublayer(placeholder)
             layer.addSublayer(content)
             outline.fillColor = nil
             outline.strokeColor = NSColor.pasteboardAccent.cgColor
@@ -39,7 +45,7 @@ final class CanvasScene {
             layer.addSublayer(outline)
             layer.addSublayer(grip)
             lock.alignmentMode = .center
-            lock.backgroundColor = NSColor.pasteboardAccent.cgColor
+            lock.backgroundColor = NSColor.pasteboardAction.cgColor
             lock.cornerRadius = 4
             lock.masksToBounds = true
             layer.addSublayer(lock)
@@ -60,6 +66,7 @@ final class CanvasScene {
     private var renderedGuides: [AlignmentGuide] = []
     private var renderedSpacing: [SpacingGuide] = []
     private var renderedBackingScale: CGFloat = 0
+    private var renderedDark: Bool?
     private var groupOutlines: [UUID: CAShapeLayer] = [:]
     private var groupLabels: [UUID: CATextLayer] = [:]
     private var groupGrips: [UUID: CAShapeLayer] = [:]
@@ -82,177 +89,228 @@ final class CanvasScene {
     func update(
         cards: [Card], selection: Set<UUID>, groups: [UUID: CGRect], guides: [AlignmentGuide],
         spacingGuides: [SpacingGuide] = [], editing: UUID?, zoom: CGFloat, offset: CGPoint, store: BoardStore,
-        color: (Int) -> NSColor, backingScale: CGFloat
+        color: (Int) -> NSColor, backingScale: CGFloat, appearance: NSAppearance? = nil
     ) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        let zoomChanged = previousZoom != zoom
-        root.position = offset
-        if zoomChanged { root.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom)) }
-        let boardCards = store.board.cards
-        if renderedBoardCards != boardCards {
-            cachedLockedIDs = store.board.lockedIDs
-            cachedLockedGroups = Set(
-                boardCards.filter { cachedLockedIDs.contains($0.id) }.compactMap(\.groupID))
-            renderedBoardCards = boardCards
-        }
-        let locked = cachedLockedIDs
-        let backingChanged = renderedBackingScale != backingScale
-        let groupPresenceChanged = renderedGroups.isEmpty != groups.isEmpty
-        if zoomChanged || backingChanged || renderedGroups != groups
-            || renderedGroupLocks != cachedLockedGroups
-        {
-            updateGroups(groups, locked: cachedLockedGroups, zoom: zoom, backingScale: backingScale)
-            renderedGroups = groups
-            renderedGroupLocks = cachedLockedGroups
-        }
-        if zoomChanged || renderedGuides != guides {
-            updateGuides(guides, zoom: zoom)
-            renderedGuides = guides
-        }
-        if zoomChanged || backingChanged || groupPresenceChanged || renderedSpacing != spacingGuides {
-            updateSpacingGuides(
-                spacingGuides, zoom: zoom, backingScale: backingScale, hasGroups: !groups.isEmpty)
-            renderedSpacing = spacingGuides
-        }
-        renderedBackingScale = backingScale
-        let scale = backingScale * (zoom > 2 ? 4 : zoom > 1 ? 2 : 1)
-        let artworkUnchanged =
-            renderedCards == cards && renderedSelection == selection && renderedEditing == editing
-            && imageRevision == store.imageRevision && scale == textScale
-        // Panning only moves the retained root layer. Rebuild paths, labels and
-        // preview requests when their inputs change, rather than every frame.
-        if !artworkUnchanged || zoomChanged {
-            for card in cards {
-                if let asset = card.asset, BoardImageIO.isSVG(asset) {
-                    let level = BoardImageIO.previewLevel(max(card.width, card.height) * zoom * backingScale)
-                    if artwork[card.id]?.previewAsset != asset
-                        || artwork[card.id]?.previewCrop != card.imageCrop
-                        || max(artwork[card.id]?.preview?.width ?? 0, artwork[card.id]?.preview?.height ?? 0)
-                            < level
-                    {
-                        _ = store.preview(asset, pixelSize: CGFloat(level), crop: card.imageCrop)
+        let appearance = appearance ?? NSApp.effectiveAppearance
+        appearance.performAsCurrentDrawingAppearance {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
+            let zoomChanged = previousZoom != zoom
+            let appearanceChanged = renderedDark != appearance.isPasteboardDark
+            renderedDark = appearance.isPasteboardDark
+            if appearanceChanged {
+                guideLayer.strokeColor = NSColor.pasteboardAccent.cgColor
+                spacingLayer.strokeColor = NSColor.pasteboardAccent.cgColor
+                for art in artwork.values {
+                    art.outline.strokeColor = NSColor.pasteboardAccent.cgColor
+                    art.grip.strokeColor = NSColor.pasteboardAccent.cgColor
+                    art.lock.backgroundColor = NSColor.pasteboardAction.cgColor
+                }
+                for outline in groupOutlines.values { outline.strokeColor = NSColor.pasteboardAccent.cgColor }
+                for label in groupLabels.values { label.backgroundColor = NSColor.pasteboardAction.cgColor }
+                for grip in groupGrips.values { grip.strokeColor = NSColor.pasteboardAccent.cgColor }
+                for label in spacingLabels { label.backgroundColor = NSColor.pasteboardCanvas.cgColor }
+            }
+            root.position = offset
+            if zoomChanged { root.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom)) }
+            let boardCards = store.board.cards
+            if renderedBoardCards != boardCards {
+                cachedLockedIDs = store.board.lockedIDs
+                cachedLockedGroups = Set(
+                    boardCards.filter { cachedLockedIDs.contains($0.id) }.compactMap(\.groupID))
+                renderedBoardCards = boardCards
+            }
+            let locked = cachedLockedIDs
+            let backingChanged = renderedBackingScale != backingScale
+            let groupPresenceChanged = renderedGroups.isEmpty != groups.isEmpty
+            if appearanceChanged || zoomChanged || backingChanged || renderedGroups != groups
+                || renderedGroupLocks != cachedLockedGroups
+            {
+                updateGroups(groups, locked: cachedLockedGroups, zoom: zoom, backingScale: backingScale)
+                renderedGroups = groups
+                renderedGroupLocks = cachedLockedGroups
+            }
+            if appearanceChanged || zoomChanged || renderedGuides != guides {
+                updateGuides(guides, zoom: zoom)
+                renderedGuides = guides
+            }
+            if appearanceChanged || zoomChanged || backingChanged || groupPresenceChanged
+                || renderedSpacing != spacingGuides
+            {
+                updateSpacingGuides(
+                    spacingGuides, zoom: zoom, backingScale: backingScale, hasGroups: !groups.isEmpty)
+                renderedSpacing = spacingGuides
+            }
+            renderedBackingScale = backingScale
+            let scale = backingScale * (zoom > 2 ? 4 : zoom > 1 ? 2 : 1)
+            let artworkUnchanged =
+                renderedCards == cards && renderedSelection == selection && renderedEditing == editing
+                && imageRevision == store.imageRevision && scale == textScale && !appearanceChanged
+            // Panning only moves the retained root layer. Rebuild paths, labels and
+            // preview requests when their inputs change, rather than every frame.
+            if !artworkUnchanged || zoomChanged {
+                for card in cards {
+                    if let asset = card.asset, BoardImageIO.isSVG(asset) {
+                        let level = BoardImageIO.previewLevel(
+                            max(card.width, card.height) * zoom * backingScale)
+                        if artwork[card.id]?.previewAsset != asset
+                            || artwork[card.id]?.previewCrop != card.imageCrop
+                            || max(
+                                artwork[card.id]?.preview?.width ?? 0, artwork[card.id]?.preview?.height ?? 0)
+                                < level
+                        {
+                            _ = store.preview(asset, pixelSize: CGFloat(level), crop: card.imageCrop)
+                        }
                     }
                 }
             }
-        }
-        if artworkUnchanged {
-            if previousZoom != zoom {
-                for id in selection {
-                    if let art = artwork[id], let card = art.card {
-                        updateSelection(art, bounds: CGRect(origin: .zero, size: card.rect.size), zoom: zoom)
+            if artworkUnchanged {
+                if previousZoom != zoom {
+                    for id in selection {
+                        if let art = artwork[id], let card = art.card {
+                            updateSelection(
+                                art, bounds: CGRect(origin: .zero, size: card.rect.size), zoom: zoom)
+                        }
+                    }
+                    for art in artwork.values where !art.lock.isHidden {
+                        updateLock(art, zoom: zoom, backingScale: backingScale)
                     }
                 }
-                for art in artwork.values where !art.lock.isHidden {
-                    updateLock(art, zoom: zoom, backingScale: backingScale)
+                previousZoom = zoom
+                return
+            }
+            let ids = Set(cards.map(\.id))
+            for id in Array(artwork.keys) where !ids.contains(id) {
+                artwork.removeValue(forKey: id)?.layer.removeFromSuperlayer()
+            }
+            for (i, card) in cards.enumerated() {
+                let art: Artwork
+                if let existing = artwork[card.id] {
+                    art = existing
+                } else {
+                    art = Artwork()
+                    artwork[card.id] = art
+                    root.addSublayer(art.layer)
                 }
+                let selected = selection.contains(card.id) && card.groupID == nil
+                if art.layer.zPosition != CGFloat(i) { art.layer.zPosition = CGFloat(i) }
+                if art.card?.x != card.x || art.card?.y != card.y {
+                    art.layer.position = CGPoint(x: card.x, y: card.y)
+                }
+                let bounds = CGRect(x: 0, y: 0, width: card.width, height: card.height)
+                let sizeChanged = art.card?.width != card.width || art.card?.height != card.height
+                let styleChanged = art.card?.renderScale != card.renderScale
+                if sizeChanged || styleChanged {
+                    art.layer.bounds = bounds
+                    art.content.frame = bounds
+                    let style = card.renderScale
+                    art.content.cornerRadius = card.asset == nil ? 7 * style : 0
+                    art.layer.shadowRadius = 6 * style
+                    art.layer.shadowOffset = CGSize(width: 0, height: 2 * style)
+                    art.layer.shadowPath =
+                        card.asset == nil
+                        ? CGPath(
+                            roundedRect: bounds, cornerWidth: 7 * style, cornerHeight: 7 * style,
+                            transform: nil)
+                        : nil
+                    art.layer.shadowOpacity = card.asset == nil ? 0.08 : 0
+                    art.text.frame = bounds.insetBy(dx: 20 * style, dy: 19 * style)
+                }
+                if art.card == nil || art.card?.tone != card.tone || art.card?.hex != card.hex {
+                    art.content.backgroundColor =
+                        card.hex.flatMap(SwatchColor.init)?.color
+                        ?? (card.asset == nil ? color(card.tone).cgColor : nil)
+                }
+                if let hex = card.hex {
+                    if art.card?.hex != hex || styleChanged || sizeChanged {
+                        let style = SwatchArtwork.style(hex: hex, size: bounds.size, scale: card.renderScale)
+                        art.text.frame = style.frame
+                        art.text.string = style.string
+                    }
+                    art.text.isWrapped = false
+                } else if art.card?.text != card.text || styleChanged {
+                    art.text.isWrapped = true
+                    let paragraph = NSMutableParagraphStyle()
+                    paragraph.lineBreakMode = .byWordWrapping
+                    art.text.string = NSAttributedString(
+                        string: card.text ?? "",
+                        attributes: [
+                            .font: NSFont.systemFont(ofSize: 18 * card.renderScale),
+                            .foregroundColor: NSColor.pasteboardNoteInk, .paragraphStyle: paragraph,
+                        ])
+                }
+                art.text.isHidden = (card.text == nil && card.hex == nil) || card.id == editing
+                if art.text.contentsScale != scale { art.text.contentsScale = scale }
+                if let asset = card.asset {
+                    if let previous = art.previewAsset, previous != asset {
+                        art.content.contents = nil
+                        art.preview = nil
+                        art.previewAsset = nil
+                    }
+                    let vector = BoardImageIO.isSVG(asset)
+                    let pixels = max(card.width, card.height) * zoom * backingScale
+                    let sufficient =
+                        vector && art.previewAsset == asset && art.previewCrop == card.imageCrop
+                        && max(art.preview?.width ?? 0, art.preview?.height ?? 0)
+                            >= BoardImageIO.previewLevel(pixels)
+                    var preview =
+                        sufficient
+                        ? art.preview : store.preview(asset, pixelSize: pixels, crop: card.imageCrop)
+                    if preview == nil && vector {
+                        preview = store.preview(asset, pixelSize: 512).flatMap { card.imageCrop.image($0) }
+                    }
+                    if let preview, art.preview !== preview || art.card?.crop != card.crop {
+                        art.content.contents = vector ? preview : card.imageCrop.image(preview)
+                        art.preview = preview
+                        art.previewAsset = asset
+                        art.previewCrop = vector ? card.imageCrop : .full
+                    }
+                    art.placeholder.isHidden = art.preview != nil
+                    art.content.backgroundColor = art.preview == nil ? NSColor.pasteboardSurface.cgColor : nil
+                    art.content.borderWidth = art.preview == nil ? 1 : 0
+                    art.content.borderColor = NSColor.pasteboardBorder.cgColor
+                    if art.preview == nil {
+                        let unavailable = store.previewHasFailed(
+                            asset, pixelSize: pixels, crop: card.imageCrop)
+                        art.placeholder.frame = CGRect(
+                            x: 12, y: max(0, bounds.midY - 20), width: max(1, bounds.width - 24),
+                            height: min(40, bounds.height))
+                        art.placeholder.contentsScale = scale
+                        art.placeholder.string = NSAttributedString(
+                            string: unavailable ? "Image unavailable" : "Loading image…",
+                            attributes: [
+                                .font: NSFont.systemFont(
+                                    ofSize: min(14 * card.renderScale, bounds.height / 4), weight: .medium),
+                                .foregroundColor: NSColor.pasteboardMuted.usingColorSpace(.sRGB)!,
+                            ])
+                    }
+                }
+                if card.asset == nil {
+                    art.placeholder.isHidden = true
+                    art.content.borderWidth = 0
+                    art.content.contents = nil
+                    art.preview = nil
+                    art.previewAsset = nil
+                    art.previewCrop = .full
+                }
+                art.outline.isHidden = !selected
+                art.grip.isHidden = !selected || selection.count != 1 || locked.contains(card.id)
+                art.lock.isHidden = !locked.contains(card.id) || card.groupID != nil
+                if !art.lock.isHidden { updateLock(art, zoom: zoom, backingScale: backingScale) }
+                if selected && (sizeChanged || !art.selected || previousZoom != zoom) {
+                    updateSelection(art, bounds: bounds, zoom: zoom)
+                }
+                art.card = card
+                art.selected = selected
             }
             previousZoom = zoom
-            return
+            renderedCards = cards
+            renderedSelection = selection
+            renderedEditing = editing
+            imageRevision = store.imageRevision
+            textScale = scale
         }
-        let ids = Set(cards.map(\.id))
-        for id in Array(artwork.keys) where !ids.contains(id) {
-            artwork.removeValue(forKey: id)?.layer.removeFromSuperlayer()
-        }
-        for (i, card) in cards.enumerated() {
-            let art: Artwork
-            if let existing = artwork[card.id] {
-                art = existing
-            } else {
-                art = Artwork()
-                artwork[card.id] = art
-                root.addSublayer(art.layer)
-            }
-            let selected = selection.contains(card.id) && card.groupID == nil
-            if art.layer.zPosition != CGFloat(i) { art.layer.zPosition = CGFloat(i) }
-            if art.card?.x != card.x || art.card?.y != card.y {
-                art.layer.position = CGPoint(x: card.x, y: card.y)
-            }
-            let bounds = CGRect(x: 0, y: 0, width: card.width, height: card.height)
-            let sizeChanged = art.card?.width != card.width || art.card?.height != card.height
-            let styleChanged = art.card?.renderScale != card.renderScale
-            if sizeChanged || styleChanged {
-                art.layer.bounds = bounds
-                art.content.frame = bounds
-                let style = card.renderScale
-                art.content.cornerRadius = card.asset == nil ? 7 * style : 0
-                art.layer.shadowRadius = 6 * style
-                art.layer.shadowOffset = CGSize(width: 0, height: 2 * style)
-                art.layer.shadowPath =
-                    card.asset == nil
-                    ? CGPath(
-                        roundedRect: bounds, cornerWidth: 7 * style, cornerHeight: 7 * style, transform: nil)
-                    : nil
-                art.layer.shadowOpacity = card.asset == nil ? 0.08 : 0
-                art.text.frame = bounds.insetBy(dx: 20 * style, dy: 19 * style)
-            }
-            if art.card == nil || art.card?.tone != card.tone || art.card?.hex != card.hex {
-                art.content.backgroundColor =
-                    card.hex.flatMap(SwatchColor.init)?.color
-                    ?? (card.asset == nil ? color(card.tone).cgColor : nil)
-            }
-            if let hex = card.hex {
-                if art.card?.hex != hex || styleChanged || sizeChanged {
-                    let style = SwatchArtwork.style(hex: hex, size: bounds.size, scale: card.renderScale)
-                    art.text.frame = style.frame
-                    art.text.string = style.string
-                }
-                art.text.isWrapped = false
-            } else if art.card?.text != card.text || styleChanged {
-                art.text.isWrapped = true
-                let paragraph = NSMutableParagraphStyle()
-                paragraph.lineBreakMode = .byWordWrapping
-                art.text.string = NSAttributedString(
-                    string: card.text ?? "",
-                    attributes: [
-                        .font: NSFont.systemFont(ofSize: 18 * card.renderScale),
-                        .foregroundColor: NSColor.pasteboardInk, .paragraphStyle: paragraph,
-                    ])
-            }
-            art.text.isHidden = (card.text == nil && card.hex == nil) || card.id == editing
-            if art.text.contentsScale != scale { art.text.contentsScale = scale }
-            if let asset = card.asset {
-                let vector = BoardImageIO.isSVG(asset)
-                let pixels = max(card.width, card.height) * zoom * backingScale
-                let sufficient =
-                    vector && art.previewAsset == asset && art.previewCrop == card.imageCrop
-                    && max(art.preview?.width ?? 0, art.preview?.height ?? 0)
-                        >= BoardImageIO.previewLevel(pixels)
-                var preview =
-                    sufficient ? art.preview : store.preview(asset, pixelSize: pixels, crop: card.imageCrop)
-                if preview == nil && vector {
-                    preview = store.preview(asset, pixelSize: 512).flatMap { card.imageCrop.image($0) }
-                }
-                if let preview, art.preview !== preview || art.card?.crop != card.crop {
-                    art.content.contents = vector ? preview : card.imageCrop.image(preview)
-                    art.preview = preview
-                    art.previewAsset = asset
-                    art.previewCrop = vector ? card.imageCrop : .full
-                }
-            }
-            if card.asset == nil {
-                art.content.contents = nil
-                art.preview = nil
-                art.previewAsset = nil
-                art.previewCrop = .full
-            }
-            art.outline.isHidden = !selected
-            art.grip.isHidden = !selected || selection.count != 1 || locked.contains(card.id)
-            art.lock.isHidden = !locked.contains(card.id) || card.groupID != nil
-            if !art.lock.isHidden { updateLock(art, zoom: zoom, backingScale: backingScale) }
-            if selected && (sizeChanged || !art.selected || previousZoom != zoom) {
-                updateSelection(art, bounds: bounds, zoom: zoom)
-            }
-            art.card = card
-            art.selected = selected
-        }
-        previousZoom = zoom
-        renderedCards = cards
-        renderedSelection = selection
-        renderedEditing = editing
-        imageRevision = store.imageRevision
-        textScale = scale
     }
     private func updateSpacingGuides(
         _ guides: [SpacingGuide], zoom: CGFloat, backingScale: CGFloat, hasGroups: Bool
@@ -286,7 +344,7 @@ final class CanvasScene {
                     ? String(format: "%.0f", guide.distance) : String(format: "%.1f", guide.distance)
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: NSFont.systemFont(ofSize: 10.5 / zoom, weight: .medium),
-                    .foregroundColor: NSColor.pasteboardAccent,
+                    .foregroundColor: NSColor.pasteboardAccent.usingColorSpace(.sRGB)!,
                 ]
                 let width = max(25 / zoom, text.size(withAttributes: attributes).width + 8 / zoom)
                 let center = point((span.from + span.to) / 2, position)
@@ -371,7 +429,7 @@ final class CanvasScene {
                 outline.zPosition = 1_000_000
                 label = CATextLayer()
                 label.alignmentMode = .center
-                label.backgroundColor = NSColor.pasteboardAccent.cgColor
+                label.backgroundColor = NSColor.pasteboardAction.cgColor
                 label.masksToBounds = true
                 label.zPosition = 1_000_001
                 grip = CAShapeLayer()
@@ -430,5 +488,42 @@ final class CanvasScene {
         art.lock.contentsScale = backingScale * zoom
         art.lock.string = NSAttributedString(
             string: "🔒", attributes: [.font: NSFont.systemFont(ofSize: 11 / zoom)])
+    }
+}
+
+// A stencil tile lets Core Graphics repeat the grid in one fill. Its geometry
+// survives panning; a new pattern is needed only when the grid spacing changes.
+final class BoardGrid {
+    private var pattern: CGPattern?
+    private var renderedSpacing: CGFloat = 0
+    private(set) var generation = 0
+    func draw(in context: CGContext, bounds: CGRect, spacing: CGFloat, offset: CGPoint) {
+        guard spacing.isFinite, spacing > 0 else { return }
+        if pattern == nil || renderedSpacing != spacing {
+            var callbacks = CGPatternCallbacks(
+                version: 0,
+                drawPattern: { _, context in
+                    context.fillEllipse(in: CGRect(x: 0, y: 0, width: 1.5, height: 1.5))
+                }, releaseInfo: nil)
+            pattern = CGPattern(
+                info: nil, bounds: CGRect(x: 0, y: 0, width: spacing, height: spacing),
+                matrix: .identity, xStep: spacing, yStep: spacing, tiling: .constantSpacingMinimalDistortion,
+                isColored: false, callbacks: &callbacks)
+            renderedSpacing = spacing
+            generation += 1
+        }
+        guard let pattern, let space = CGColorSpace(patternBaseSpace: CGColorSpace(name: CGColorSpace.sRGB)!),
+            let color = NSColor.pasteboardGrid.usingColorSpace(.sRGB)
+        else { return }
+        context.saveGState()
+        context.setFillColorSpace(space)
+        context.setFillPattern(
+            pattern, colorComponents: [color.redComponent, color.greenComponent, color.blueComponent, 1])
+        context.setPatternPhase(
+            CGSize(
+                width: offset.x.truncatingRemainder(dividingBy: spacing),
+                height: offset.y.truncatingRemainder(dividingBy: spacing)))
+        context.fill(bounds)
+        context.restoreGState()
     }
 }

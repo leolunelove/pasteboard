@@ -34,6 +34,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
     private let scene = CanvasScene()
+    private let grid = BoardGrid()
     private(set) lazy var minimap = BoardMinimap(canvas: self)
     var minimapEnabled = true { didSet { updateMinimap() } }
     private var tracking: NSTrackingArea?
@@ -47,6 +48,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var zoomTimer: Timer?
     private var zoomTarget: CGFloat?
     private var pasteInFlight = 0
+    private var pendingImageCount = 0
+    private let importIndicator = ImportIndicator()
     private var deferredImports: [() -> Void] = []
     var hasPendingImports: Bool { pasteInFlight > 0 }
     private var resizing: UUID?
@@ -62,6 +65,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var baseSelection = Set<UUID>()
     private var spaceDown = false
     private var dropHighlight = false
+    var hasPointerInteraction: Bool {
+        dragging || panning || resizing != nil || resizingGroup != nil || marquee != nil
+    }
     private var editor: NSTextView?
     private var editingID: UUID?
     private var editingWasNew = false
@@ -94,13 +100,23 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             "Infinite board. Tab and Shift Tab cycle through items. Paste with Command V. Add a note with T or a colour swatch with S. Hold Space and drag to pan."
         )
         addSubview(minimap)
+        addSubview(importIndicator)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override var isOpaque: Bool { true }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+        minimap.needsDisplay = true
+    }
 
     override func layout() {
         super.layout()
         minimap.frame = CGRect(
             x: max(12, bounds.width - 224), y: max(12, bounds.height - 174), width: 208, height: 158)
+        importIndicator.frame = CGRect(
+            x: max(12, bounds.midX - 100), y: 18, width: max(0, min(200, bounds.width - 24)), height: 38)
         updateMinimap()
     }
     func updateMinimap() {
@@ -132,21 +148,15 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             cancelCropping(nil)
         }
         if lastBoard != store.board.id {
+            lastBoard = store.board.id
             minimap.cancelNavigation()
-            if dragging {
-                restoreDragPreview()
-                dragging = false
-                dragEngaged = false
-                overSidebar = false
-                onSidebarDragEnded?()
-            }
+            cancelPointerInteraction()
             stopZoomAnimation()
             snapSession.reset()
             alignmentGuides = []
             spacingGuides = []
             finishEditing()
             selection.removeAll()
-            lastBoard = store.board.id
         }
         selection.formIntersection(Set(store.board.cards.map(\.id)))
         needsDisplay = true
@@ -230,18 +240,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         NSColor.pasteboardCanvas.setFill()
         bounds.fill()
         let spacing = 24 * zoom * (zoom < 0.4 ? 4 : (zoom < 0.7 ? 2 : 1))
-        NSColor.pasteboardGrid.setFill()
-        let dots = NSBezierPath()
-        var x = offset.x.truncatingRemainder(dividingBy: spacing)
-        while x < bounds.maxX {
-            var y = offset.y.truncatingRemainder(dividingBy: spacing)
-            while y < bounds.maxY {
-                dots.appendOval(in: CGRect(x: x, y: y, width: 1.6, height: 1.6))
-                y += spacing
-            }
-            x += spacing
+        if let context = NSGraphicsContext.current?.cgContext {
+            grid.draw(in: context, bounds: bounds, spacing: spacing, offset: offset)
         }
-        dots.fill()
         if store.board.cards.isEmpty { drawWelcome() }
         let visible = CGRect(
             origin: world(.zero), size: CGSize(width: bounds.width / zoom, height: bounds.height / zoom)
@@ -252,7 +253,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }, selection: isCropping ? [] : selection,
             groups: isCropping ? [:] : store.board.groupBounds(for: selection), guides: alignmentGuides,
             spacingGuides: spacingGuides, editing: editingID, zoom: zoom, offset: offset, store: store,
-            color: noteColor, backingScale: window?.backingScaleFactor ?? 2)
+            color: noteColor, backingScale: window?.backingScaleFactor ?? 2, appearance: effectiveAppearance)
         cropOverlay?.needsDisplay = true
         if let marquee {
             NSColor.pasteboardAccent.withAlphaComponent(0.08).setFill()
@@ -561,6 +562,51 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         needsDisplay = true
         flushDeferredImports()
     }
+
+    // A cancelled pointer gesture never leaves an unregistered resize or move
+    // behind. Restore only the items that gesture owns, even across a page switch.
+    func cancelPointerInteraction() {
+        guard hasPointerInteraction else { return }
+        let ids: Set<UUID>
+        if let resizingGroup {
+            ids = resizingGroup.ids
+        } else if let resizing {
+            ids = [resizing]
+        } else {
+            ids = Set(dragOrigins.keys)
+        }
+        if let boardID = dragBoardID,
+            let index = store.workspace.boards.firstIndex(where: { $0.id == boardID })
+        {
+            let before = Dictionary(
+                uniqueKeysWithValues: original.filter { ids.contains($0.id) }.map { ($0.id, $0) })
+            for i in store.workspace.boards[index].cards.indices {
+                let id = store.workspace.boards[index].cards[i].id
+                if let card = before[id] { store.workspace.boards[index].cards[i] = card }
+            }
+            if marquee != nil, boardID == store.board.id { selection = baseSelection }
+        }
+        dragging = false
+        dragEngaged = false
+        resizing = nil
+        resizingGroup = nil
+        panning = false
+        marquee = nil
+        pendingToggle = nil
+        overSidebar = false
+        dragOrigins.removeAll()
+        snapTargets.removeAll()
+        dragBounds = nil
+        alignmentGuides = []
+        spacingGuides = []
+        snapSession.reset()
+        onSidebarDragEnded?()
+        (spaceDown ? NSCursor.openHand : NSCursor.arrow).set()
+        store.scheduleSave()
+        needsDisplay = true
+        onSelection?()
+        flushDeferredImports()
+    }
     private func restoreDragPreview() {
         guard let id = dragBoardID, let index = store.workspace.boards.firstIndex(where: { $0.id == id })
         else { return }
@@ -579,7 +625,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     override func otherMouseUp(with event: NSEvent) { mouseUp(with: event) }
 
     override func scrollWheel(with event: NSEvent) {
-        guard resizingGroup == nil else { return }
+        guard !hasPointerInteraction else { return }
         stopZoomAnimation()
         finishEditing()
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
@@ -597,7 +643,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
     override func magnify(with event: NSEvent) {
-        guard resizingGroup == nil else { return }
+        guard !hasPointerInteraction else { return }
         stopZoomAnimation()
         finishEditing()
         setZoom(zoom * exp(event.magnification), anchor: convert(event.locationInWindow, from: nil))
@@ -663,11 +709,19 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
     @objc func fitAll(_ sender: Any?) {
         finishEditing()
-        guard let first = store.board.cards.first else {
+        fit(store.board.cards)
+    }
+    @objc func fitSelection(_ sender: Any?) {
+        finishEditing()
+        fit(store.board.cards.filter { selection.contains($0.id) })
+    }
+    private func fit(_ cards: [Card]) {
+        guard !hasPointerInteraction else { return }
+        guard let first = cards.first else {
             setZoom(1)
             return
         }
-        let rect = store.board.cards.dropFirst().reduce(first.rect) { $0.union($1.rect) }
+        let rect = cards.dropFirst().reduce(first.rect) { $0.union($1.rect) }
         let target = min(
             1.5, max(0.1, min((bounds.width - 130) / rect.width, (bounds.height - 130) / rect.height)))
         animateViewport(
@@ -715,7 +769,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         text.allowsUndo = true
         textHistory.removeAllActions()
         text.font = .systemFont(ofSize: 18 * contentZoom)
-        text.textColor = .pasteboardInk
+        text.textColor = .pasteboardNoteInk
+        text.insertionPointColor = .pasteboardNoteInk
         text.drawsBackground = true
         text.backgroundColor = noteColor(card.tone)
         text.textContainerInset = NSSize(width: 3 * contentZoom, height: 4 * contentZoom)
@@ -747,6 +802,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
     func finishEditing() {
+        cancelPointerInteraction()
         guard let editor, let id = editingID else { return }
         let content = editor.string
         self.editor = nil
@@ -780,6 +836,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     func undoManager(for view: NSTextView) -> UndoManager? { textHistory }
 
     override func keyDown(with event: NSEvent) {
+        if hasPointerInteraction && event.keyCode != 53 { return }
         if event.keyCode == 48, event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             cycleBoardFocus(backwards: event.modifierFlags.contains(.shift))
             return
@@ -790,18 +847,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             NSCursor.openHand.set()
         case 51, 117: deleteSelection(nil)
         case 53:
-            if resizingGroup != nil || (dragging && dragEngaged) {
-                overSidebar = false
-                onSidebarDragEnded?()
-                store.board.cards = original
-                resizingGroup = nil
-                dragging = false
-                dragEngaged = false
-                alignmentGuides = []
-                spacingGuides = []
-                snapSession.reset()
-                store.scheduleSave()
-                needsDisplay = true
+            if hasPointerInteraction {
+                cancelPointerInteraction()
             } else {
                 selection.removeAll()
                 needsDisplay = true
@@ -809,9 +856,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             }
         case 123, 124, 125, 126:
             let d: Double = event.modifierFlags.contains(.shift) ? 10 : 1
+            let movable = selection.subtracting(store.board.lockedIDs)
             var cards = store.board.cards
-            for i in cards.indices
-            where selection.contains(cards[i].id) && !store.board.lockedIDs.contains(cards[i].id) {
+            for i in cards.indices where movable.contains(cards[i].id) {
                 cards[i].x += event.keyCode == 123 ? -d : (event.keyCode == 124 ? d : 0)
                 cards[i].y += event.keyCode == 126 ? -d : (event.keyCode == 125 ? d : 0)
             }
@@ -837,8 +884,13 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
     }
     override func resignFirstResponder() -> Bool {
-        spaceDown = false
+        deactivateInteraction()
         return super.resignFirstResponder()
+    }
+    func deactivateInteraction() {
+        spaceDown = false
+        cancelPointerInteraction()
+        NSCursor.arrow.set()
     }
 
     override func selectAll(_ sender: Any?) {
@@ -887,6 +939,16 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         onSelection?()
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(fitSelection(_:)) {
+            return !selection.isEmpty && !hasPointerInteraction && !isCropping
+        }
+        if menuItem.action == #selector(arrangeSelection(_:)),
+            let value = menuItem.representedObject as? String, let mode = BoardArrangement(rawValue: value)
+        {
+            return !isCropping && editor == nil && !hasPointerInteraction
+                && mode.canApply(to: store.board, selection: selection)
+        }
+        if hasPointerInteraction { return false }
         if menuItem.action == #selector(editColourSwatch(_:)) {
             return !isCropping && swatchCandidate != nil
                 && !store.board.lockedIDs.contains(swatchCandidate!.id)
@@ -911,6 +973,24 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if menuItem.action == #selector(openSource(_:)) { return selectedSource != nil }
         return true
     }
+    @objc func arrangeSelection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let mode = BoardArrangement(rawValue: value),
+            !isCropping, !hasPointerInteraction
+        else { return }
+        finishEditing()
+        store.replaceCards(mode.applying(to: store.board, selection: selection), name: mode.title)
+    }
+    func arrangementMenu() -> NSMenu {
+        let menu = NSMenu(title: "Arrange")
+        for mode in BoardArrangement.allCases {
+            if mode == .horizontalSpacing { menu.addItem(.separator()) }
+            let item = menu.addItem(
+                withTitle: mode.title, action: #selector(arrangeSelection(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+        }
+        return menu
+    }
     @objc func deleteSelection(_ sender: Any?) {
         finishEditing()
         let removable = selection.subtracting(store.board.lockedIDs)
@@ -925,12 +1005,19 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         needsDisplay = true
         onSelection?()
     }
-    @objc func copy(_ sender: Any?) {
-        let cards = store.board.cards.filter { selection.contains($0.id) }
-        guard !cards.isEmpty else { return }
-        let pb = NSPasteboard.general
+    @objc func copy(_ sender: Any?) { _ = writeSelection(to: .general) }
+    @discardableResult func writeSelection(to pb: NSPasteboard) -> Bool {
+        guard let item = clipboardItem() else { return false }
         pb.clearContents()
-        if let data = try? JSONEncoder().encode(cards) { pb.setData(data, forType: internalType) }
+        let written = pb.writeObjects([item])
+        if !written { store.status?("The clipboard is unavailable. Nothing was removed.") }
+        return written
+    }
+    func clipboardItem() -> NSPasteboardItem? {
+        let cards = store.board.cards.filter { selection.contains($0.id) }
+        guard !cards.isEmpty else { return nil }
+        let item = NSPasteboardItem()
+        if let data = try? JSONEncoder().encode(cards) { item.setData(data, forType: internalType) }
         if cards.count == 1, let asset = cards[0].asset {
             if BoardImageIO.isSVG(asset),
                 let bytes = try? Data(
@@ -938,29 +1025,35 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 ), let svg = try? SVGImage(data: bytes),
                 let data = try? svg.clipboardData(crop: cards[0].imageCrop)
             {
-                for type in SVGImage.pasteboardTypes { pb.setData(data, forType: type) }
-                if let xml = String(data: data, encoding: .utf8) { pb.setString(xml, forType: .string) }
+                for type in SVGImage.pasteboardTypes { item.setData(data, forType: type) }
+                if let xml = String(data: data, encoding: .utf8) { item.setString(xml, forType: .string) }
                 let scale = min(2, 4096 / max(cards[0].width, cards[0].height))
                 if let png = try? BoardExport(
                     cards: cards, assets: store.directory.appendingPathComponent("Assets"), padding: 0
                 ).png(scale: scale, transparent: true) {
-                    pb.setData(png, forType: .png)
+                    item.setData(png, forType: .png)
                 }
             } else if cards[0].crop != nil {
                 if let png = try? BoardExport(
                     cards: cards, assets: store.directory.appendingPathComponent("Assets"), padding: 0
-                ).png(scale: 1, transparent: true) {
-                    pb.setData(png, forType: .png)
+                ).png(scale: min(2, 4096 / max(cards[0].width, cards[0].height)), transparent: true) {
+                    item.setData(png, forType: .png)
                 }
-            } else if let image = store.image(asset), let tiff = image.tiffRepresentation {
-                pb.setData(tiff, forType: .tiff)
+            } else if let data = store.originalImageData(asset),
+                let type = BoardImageIO.pasteboardType(for: data)
+            {
+                // Keep encoded originals on the clipboard instead of expanding a
+                // large image into a full-resolution TIFF on the main thread.
+                item.setData(data, forType: type)
             }
         }
         let texts = cards.compactMap { $0.hex ?? $0.text }
-        if !texts.isEmpty { pb.setString(texts.joined(separator: "\n\n"), forType: .string) }
+        if !texts.isEmpty { item.setString(texts.joined(separator: "\n\n"), forType: .string) }
+        return item
     }
     @objc func cut(_ sender: Any?) {
-        copy(sender)
+        finishEditing()
+        guard writeSelection(to: .general) else { return }
         deleteSelection(sender)
     }
     func insertionPoint() -> CGPoint {
@@ -1020,24 +1113,27 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     @objc func paste(_ sender: Any?) {
+        paste(from: .general)
+    }
+    func paste(from pb: NSPasteboard) {
         cancelCropping(nil)
         finishEditing()
         stopZoomAnimation()
         let point = insertionPoint()
         contextPoint = nil
-        let pb = NSPasteboard.general
-        if let data = pb.data(forType: internalType),
-            let cards = try? JSONDecoder().decode([Card].self, from: data), !cards.isEmpty,
-            cards.allSatisfy(BoardStore.valid),
-            cards.allSatisfy({ $0.asset == nil || store.image($0.asset!) != nil })
-        {
-            append(place(Card.copies(of: cards), near: point, avoidOverlap: true, preserveLayout: true))
-            return
-        }
+        if let data = pb.data(forType: internalType), pasteInternalCards(data, at: point) { return }
         if !receive(pb, at: point, avoidOverlap: true) {
             NSSound.beep()
             store.status?("Copy an image, SVG artwork or markup, or some text, then paste here")
         }
+    }
+    @discardableResult func pasteInternalCards(_ data: Data, at point: CGPoint) -> Bool {
+        guard let cards = try? JSONDecoder().decode([Card].self, from: data), !cards.isEmpty,
+            cards.allSatisfy(BoardStore.valid),
+            cards.allSatisfy({ $0.asset == nil || store.hasAsset($0.asset!) })
+        else { return false }
+        append(place(Card.copies(of: cards), near: point, avoidOverlap: true, preserveLayout: true))
+        return true
     }
     func append(_ cards: [Card], reveal: Bool = true) {
         guard !cards.isEmpty else { return }
@@ -1110,6 +1206,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         guard !data.isEmpty else { return }
         let boardID = store.board.id
         pasteInFlight += 1
+        pendingImageCount += data.count
+        importIndicator.show(count: pendingImageCount)
         store.status?("Adding \(data.count == 1 ? "image" : "images")…")
         store.prepareImages(data, sourceURLs: sources) { [weak self] prepared, failed in
             guard let self else { return }
@@ -1131,6 +1229,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         avoidOverlap: Bool
     ) {
         pasteInFlight -= 1
+        pendingImageCount = max(0, pendingImageCount - prepared.count - failed)
+        importIndicator.show(count: pendingImageCount)
         let cards = prepared.map { store.card(for: $0, at: .zero) }
         // A paste belongs to the board where it began, even if the user switches.
         if store.board.id == boardID {
@@ -1311,6 +1411,13 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 item.target = self
             }
             if canGroup || canUngroup { menu.addItem(.separator()) }
+            let arrange = NSMenuItem(title: "Arrange", action: nil, keyEquivalent: "")
+            arrange.submenu = arrangementMenu()
+            menu.addItem(arrange)
+            let fit = menu.addItem(
+                withTitle: "Fit Selection", action: #selector(fitSelection(_:)), keyEquivalent: "")
+            fit.target = self
+            menu.addItem(.separator())
             for (title, action) in [
                 ("Copy", #selector(copy(_:))), ("Duplicate", #selector(duplicate(_:))),
                 ("Bring to Front", #selector(bringToFront(_:))), ("Delete", #selector(deleteSelection(_:))),

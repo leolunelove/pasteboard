@@ -142,7 +142,7 @@ final class TransferBadge: NSView {
             y: max(8, min(parent.bounds.height - 38, point.y - 38)), width: label.frame.width + 24, height: 30
         )
         label.frame.origin = CGPoint(x: 12, y: 7)
-        layer?.backgroundColor = (valid ? NSColor.pasteboardAccent : .pasteboardMuted).cgColor
+        layer?.backgroundColor = (valid ? NSColor.pasteboardAction : .pasteboardMuted).cgColor
         if superview !== parent { parent.addSubview(self) }
     }
 }

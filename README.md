@@ -31,8 +31,9 @@ No account is needed in the app. Boards and images stay on your Mac. The website
 ## A little room for everything
 
 - **Images and text:** paste or drop images, transparent PNGs, SVG artwork and notes. Add colour swatches with visible HEX values.
+- **Your preferred appearance:** choose System, Light or Dark at the bottom of the sidebar, or under View → Appearance. Artwork and exports keep their original colours.
 - **An infinite board:** pan, zoom, find items with Tab, or jump around using the minimap.
-- **Arrange together:** move and resize groups in proportion, with alignment and equal-spacing guides.
+- **Arrange together:** move and resize groups in proportion, with alignment and equal-spacing guides. Use **Arrange** to align or distribute selected items; complete groups move as single objects.
 - **Keep things organised:** workspaces, named pages, drag between pages, search and locking.
 - **Refine and share:** non-destructive image cropping, source links, and PNG or PDF export.
 - **Keep a copy:** local autosave, automatic backup checkpoints, and portable board exports.
@@ -54,6 +55,8 @@ Checking GitHub requires an internet connection. Checks are initiated from the u
 | Pan                           | Space + drag, or two-finger scroll |
 | Zoom                          | Pinch, or ⌘+ / ⌘−                  |
 | Fit the board                 | ⌘0                                 |
+| Fit selected items            | ⇧⌘0                                |
+| Cancel a move or resize       | Esc                                |
 | Next / previous item or group | Tab / Shift-Tab                    |
 | Group / ungroup               | ⌘G / ⇧⌘G                           |
 | Search                        | ⌘F                                 |
@@ -72,11 +75,13 @@ There are no third-party runtime dependencies. The app uses Swift, AppKit and na
 
 After building, run `./scripts/test-updates.sh` to verify remote-update metadata, failed downloads, checksums, archive restrictions, app validation, installation and rollback using disposable app copies.
 
-Run `./scripts/test-canvas.sh` to check retained panning, group locking, zoom and guide geometry. `./scripts/test-canvas.sh --benchmark` prints the median time in milliseconds for 1,000 retained canvas updates with an 800-card fixture; it excludes drawing and screen refresh.
+Run `./scripts/test-canvas.sh` to check retained panning, group locking, zoom and guide geometry, live appearance changes, grid/minimap caching, export colours and final autosave after a gesture. `./scripts/test-canvas.sh --benchmark` prints the median time in milliseconds for 1,000 retained canvas updates with an 800-card fixture; it excludes drawing and screen refresh.
 
 Swift formatting is defined in `.swift-format`. Apply it with `xcrun swift-format format --in-place --recursive mac/Source tests`. Updater metadata, HTTPS transfer, installation and window presentation live in separate modules.
 
-Run `./scripts/test-core.sh` to check spacing, pages, backup restoration, cropping, navigation, minimap controls, SVG handling and swatches.
+Run `./scripts/test-core.sh` to check pointer cancellation, alignment/distribution, original image clipboard bytes and aspect ratios, spacing, pages, backup restoration, cropping, navigation, minimap controls, SVG handling and swatches.
+
+For an extended reliability run, use `./scripts/test-soak.sh 4800` (80 minutes). It uses temporary boards to exercise randomized edits, undo/redo, page changes, image imports, rendering and save/reload checks. The script snapshots its test sources before compiling, so development can continue while it runs.
 
 ## Project layout
 

@@ -6,15 +6,54 @@ extension NSColor {
             srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255,
             blue: CGFloat(hex & 255) / 255, alpha: 1)
     }
-    static let pasteboardInk = NSColor(hex: 0x242629)
-    static let pasteboardAccent = NSColor(hex: 0x3456C8)
-    static let pasteboardCanvas = NSColor(hex: 0xF7F7F5)
-    static let pasteboardMuted = NSColor(hex: 0x656A73)
-    static let pasteboardChrome = NSColor(hex: 0xEEEEEC)
-    static let pasteboardSurface = NSColor(hex: 0xFFFFFF)
-    static let pasteboardBorder = NSColor(hex: 0xDCDDD9)
-    static let pasteboardGrid = NSColor(hex: 0xE1E2DF)
-    static let pasteboardSelection = NSColor(hex: 0xE1E7FB)
+    private static func adaptive(_ name: String, light: UInt32, dark: UInt32) -> NSColor {
+        NSColor(name: NSColor.Name(name)) { appearance in
+            NSColor(hex: appearance.isPasteboardDark ? dark : light)
+        }
+    }
+    static let pasteboardInk = adaptive("Ink", light: 0x242629, dark: 0xECEEF3)
+    static let pasteboardAccent = adaptive("Accent", light: 0x3456C8, dark: 0x97ADFF)
+    static let pasteboardAction = adaptive("Action", light: 0x3456C8, dark: 0x4564D9)
+    static let pasteboardCanvas = adaptive("Canvas", light: 0xF7F7F5, dark: 0x191B20)
+    static let pasteboardMuted = adaptive("Muted", light: 0x656A73, dark: 0xA1A7B3)
+    static let pasteboardChrome = adaptive("Chrome", light: 0xEEEEEC, dark: 0x212329)
+    static let pasteboardSurface = adaptive("Surface", light: 0xFFFFFF, dark: 0x2A2D35)
+    static let pasteboardBorder = adaptive("Border", light: 0xDCDDD9, dark: 0x3B3F49)
+    static let pasteboardGrid = adaptive("Grid", light: 0xDDDEDB, dark: 0x33363E)
+    static let pasteboardSelection = adaptive("Selection", light: 0xE1E7FB, dark: 0x313D62)
+    // Artwork remains paper coloured in either appearance, including exports.
+    static let pasteboardNoteInk = NSColor(hex: 0x242629)
+}
+
+extension NSAppearance {
+    var isPasteboardDark: Bool { bestMatch(from: [.aqua, .darkAqua]) == .darkAqua }
+}
+
+enum PasteboardAppearance: String, CaseIterable {
+    case system, light, dark
+    static let defaultsKey = "PasteboardAppearance"
+    static var current: Self {
+        Self(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .system
+    }
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
+    func apply() { NSApp.appearance = appearance }
+    func select() {
+        UserDefaults.standard.set(rawValue, forKey: Self.defaultsKey)
+        apply()
+    }
 }
 
 enum PasteboardArtwork {
@@ -31,7 +70,7 @@ enum PasteboardArtwork {
         context.saveGState()
         context.setShadow(offset: CGSize(width: 0, height: 9), blur: 14, color: CGColor(gray: 0, alpha: 0.13))
         context.addPath(tile)
-        context.setFillColor(NSColor.pasteboardAccent.cgColor)
+        context.setFillColor(NSColor(hex: 0x3456C8).cgColor)
         context.fillPath()
         context.restoreGState()
         context.saveGState()
@@ -71,7 +110,7 @@ enum PasteboardArtwork {
         context.setShadow(
             offset: CGSize(width: 0, height: 12), blur: 18, color: CGColor(gray: 0.05, alpha: 0.18))
         context.addPath(front)
-        context.setFillColor(NSColor.pasteboardSurface.cgColor)
+        context.setFillColor(NSColor.white.cgColor)
         context.fillPath()
         context.restoreGState()
         let fold = CGMutablePath()
@@ -83,7 +122,7 @@ enum PasteboardArtwork {
         context.addPath(fold)
         context.setFillColor(NSColor(hex: 0xDDE5FD).cgColor)
         context.fillPath()
-        context.setFillColor(NSColor.pasteboardAccent.cgColor)
+        context.setFillColor(NSColor(hex: 0x3456C8).cgColor)
         context.addPath(
             CGPath(
                 roundedRect: CGRect(x: 430, y: 642, width: 62, height: 62), cornerWidth: 10, cornerHeight: 10,
@@ -110,15 +149,55 @@ enum PasteboardArtwork {
     static let smallIcon = NSImage(cgImage: icon(pixels: 128), size: CGSize(width: 32, height: 32))
 }
 
-final class PasteboardToolbarButton: NSButton {
+class PasteboardHoverButton: NSButton {
+    private(set) var hovering = false
+    private var hoverTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(
+            rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverTracking = area
+    }
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        needsDisplay = true
+    }
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        needsDisplay = true
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+    override func becomeFirstResponder() -> Bool {
+        needsDisplay = true
+        return super.becomeFirstResponder()
+    }
+    override func resignFirstResponder() -> Bool {
+        needsDisplay = true
+        return super.resignFirstResponder()
+    }
+}
+
+final class PasteboardToolbarButton: PasteboardHoverButton {
     var primary = false
     override func draw(_ dirtyRect: NSRect) {
         let pressed = cell?.isHighlighted == true
         let foreground: NSColor = primary ? .white : .pasteboardInk
-        let panel = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 6, yRadius: 6)
-        (primary
-            ? NSColor.pasteboardAccent.withAlphaComponent(pressed ? 0.86 : 1)
-            : pressed ? NSColor.pasteboardSelection : NSColor.pasteboardSurface).setFill()
+        let panel = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        let fill: NSColor
+        if primary {
+            let opacity: CGFloat = pressed ? 0.8 : (hovering ? 0.9 : 1)
+            fill = NSColor.pasteboardAction.withAlphaComponent(opacity)
+        } else if pressed || (hovering && isEnabled) {
+            fill = .pasteboardSelection
+        } else {
+            fill = NSColor.pasteboardSurface.withAlphaComponent(isEnabled ? 1 : 0.4)
+        }
+        fill.setFill()
         panel.fill()
         if !primary {
             NSColor.pasteboardBorder.setStroke()

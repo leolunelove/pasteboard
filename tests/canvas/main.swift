@@ -58,8 +58,119 @@ do {
     try check(gap.path!.boundingBox.minY == groupedGapY + 24)
     frame(drawGroups: false, drawGuides: false)
     try check(guide.isHidden && gap.isHidden && guide.path == nil)
+    let light = NSAppearance(named: .aqua)!
+    let dark = NSAppearance(named: .darkAqua)!
+    func themedFrame(_ appearance: NSAppearance) {
+        scene.update(
+            cards: [first], selection: selection, groups: groups, guides: guides,
+            spacingGuides: spacing, editing: nil, zoom: 1, offset: .zero, store: store,
+            color: { _ in .white }, backingScale: 2, appearance: appearance)
+    }
+    themedFrame(light)
+    let lightStroke = guide.strokeColor!
+    themedFrame(dark)
+    let themedOutline = scene.root.sublayers!.first { $0.zPosition == 1_000_000 } as! CAShapeLayer
+    try check(guide.strokeColor != lightStroke && themedOutline.strokeColor == guide.strokeColor)
+    themedFrame(light)
+    try check(guide.strokeColor == lightStroke)
+
+    let context = CGContext(
+        data: nil, width: 512, height: 512, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    let grid = BoardGrid()
+    grid.draw(in: context, bounds: CGRect(x: 0, y: 0, width: 512, height: 512), spacing: 24, offset: .zero)
+    let generation = grid.generation
+    for x in 1...100 {
+        grid.draw(
+            in: context, bounds: CGRect(x: 0, y: 0, width: 512, height: 512), spacing: 24,
+            offset: CGPoint(x: x, y: -x))
+    }
+    try check(grid.generation == generation)
+    grid.draw(in: context, bounds: CGRect(x: 0, y: 0, width: 512, height: 512), spacing: 32, offset: .zero)
+    try check(grid.generation == generation + 1)
+
+    let canvas = BoardView(store: store)
+    canvas.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    store.board.cards = [Card(x: -2000, y: -2000, width: 4000, height: 4000, text: "Map extent")]
+    store.board.zoom = 1
+    store.board.offsetX = 0
+    store.board.offsetY = 0
+    canvas.minimap.frame = CGRect(x: 0, y: 0, width: 208, height: 158)
+    canvas.minimap.render(in: context)
+    let mapGeneration = canvas.minimap.artworkGeneration
+    store.board.offsetX = 40
+    canvas.minimap.render(in: context)
+    try check(canvas.minimap.artworkGeneration == mapGeneration)
+    canvas.selection = [store.board.cards[0].id]
+    canvas.minimap.render(in: context)
+    try check(canvas.minimap.artworkGeneration == mapGeneration + 1)
+    store.board.cards[0].x += 10
+    canvas.minimap.render(in: context)
+    try check(canvas.minimap.artworkGeneration == mapGeneration + 2)
+
+    let exported = BoardExport(cards: [first], assets: directory.appendingPathComponent("Assets"))
+    var lightPNG: Data!
+    var darkPNG: Data!
+    light.performAsCurrentDrawingAppearance { lightPNG = try? exported.png(scale: 1, transparent: false) }
+    dark.performAsCurrentDrawingAppearance { darkPNG = try? exported.png(scale: 1, transparent: false) }
+    try check(lightPNG != nil && lightPNG == darkPNG)
+    // Repeated gesture saves must persist the final viewport after the burst.
+    for x in 0..<100 {
+        store.board.offsetX = Double(x)
+        store.scheduleSave()
+    }
+    let deadline = Date(timeIntervalSinceNow: 3)
+    while Date() < deadline {
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02))
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("Workspace.json")),
+            let saved = try? JSONDecoder().decode(Workspace.self, from: data),
+            saved.boards.first(where: { $0.id == store.board.id })?.offsetX == 99
+        {
+            break
+        }
+    }
+    let saved = try JSONDecoder().decode(
+        Workspace.self, from: Data(contentsOf: directory.appendingPathComponent("Workspace.json")))
+    try check(saved.boards.first(where: { $0.id == store.board.id })?.offsetX == 99)
+    let missing = Card(x: 0, y: 0, width: 240, height: 160, asset: "missing-preview.png")
+    let imageScene = CanvasScene()
+    func imageFrame(_ card: Card) {
+        store.board.cards = [card]
+        imageScene.update(
+            cards: [card], selection: [], groups: [:], guides: [], editing: nil,
+            zoom: 1, offset: .zero, store: store, color: { _ in .white }, backingScale: 2, appearance: dark)
+    }
+    func visibleText(_ layer: CALayer) -> [String] {
+        guard !layer.isHidden else { return [] }
+        let text = (layer as? CATextLayer)?.string as? NSAttributedString
+        return (text.map { [$0.string] } ?? []) + (layer.sublayers ?? []).flatMap(visibleText)
+    }
+    imageFrame(missing)
+    try check(visibleText(imageScene.root).contains("Loading image…"))
+    let failureDeadline = Date(timeIntervalSinceNow: 5)
+    while !store.previewHasFailed("missing-preview.png", pixelSize: 480, crop: .full)
+        && Date() < failureDeadline
+    {
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+    imageFrame(missing)
+    try check(visibleText(imageScene.root).contains("Image unavailable"))
+    let transparent = CGContext(
+        data: nil, width: 128, height: 128, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    transparent.setFillColor(CGColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 0.5))
+    transparent.fillEllipse(in: CGRect(x: 32, y: 32, width: 64, height: 64))
+    let card = try store.imageCard(
+        NSImage(cgImage: transparent.makeImage()!, size: CGSize(width: 128, height: 128)), at: .zero)
+    imageFrame(card)
+    let artwork = imageScene.root.sublayers!.first { $0.zPosition == 0 }!
+    let content = artwork.sublayers!.first!
+    try check(content.backgroundColor == nil && content.contents != nil)
+    try check(!visibleText(imageScene.root).contains("Loading image…"))
     print(
-        "PASS: retained pan geometry, zoom strokes, moved group bounds, offscreen group locking/unlocking, spacing offset and cleared guides"
+        "PASS: retained scene, appearance changes, cached grid/minimap invalidation, export colours, gesture autosave, visible loading/failure states and transparent image surfaces"
     )
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)

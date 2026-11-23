@@ -14,7 +14,7 @@ struct BoardExport {
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -area.minX, y: -area.minY)
         if !transparent {
-            context.setFillColor(NSColor.pasteboardCanvas.cgColor)
+            context.setFillColor(NSColor(hex: 0xF7F7F5).cgColor)
             context.fill(area)
         }
         for card in cards {
@@ -61,7 +61,7 @@ struct BoardExport {
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     attributes: [
                         .font: NSFont.systemFont(ofSize: 18 * card.renderScale),
-                        .foregroundColor: NSColor.pasteboardInk, .paragraphStyle: paragraph,
+                        .foregroundColor: NSColor.pasteboardNoteInk, .paragraphStyle: paragraph,
                     ])
                 NSGraphicsContext.restoreGraphicsState()
             }

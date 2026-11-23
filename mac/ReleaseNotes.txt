@@ -1,4 +1,7 @@
-Faster canvas panning reuses group outlines, labels, guides and image previews.
-The Swift code has consistent formatting and clearer updater modules.
-GitHub updates, download verification and rollback remain built in.
+A smoother worktable, with System, Light and Dark appearances.
+Align and evenly space selected items, treating each group as one object.
+Fit Selection and a clearer zoom preset menu help you move around the board.
+Escape and focus changes now cancel moves and resizes cleanly.
+Image copies reuse original bytes; wide and tall images keep their proportions.
+Import feedback and missing-image placeholders make slow loads clearer.
 Pasteboard is still an early preview. Keep a backup of important boards.

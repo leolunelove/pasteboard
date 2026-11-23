@@ -2,6 +2,17 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 
+enum LocalRead {
+    // Retry once before treating a transient file/decoder failure as corruption.
+    // Normal reads take the direct path; failed reads wait only 20 milliseconds.
+    static func retry<Value>(_ operation: () throws -> Value) throws -> Value {
+        do { return try operation() } catch {
+            Thread.sleep(forTimeInterval: 0.02)
+            return try operation()
+        }
+    }
+}
+
 struct PreparedImage {
     let asset: String
     let preview: CGImage
@@ -166,7 +177,7 @@ final class BoardStore {
     var changed: (() -> Void)?
     var status: ((String) -> Void)?
     var loadWarning: String?
-    private var saveTask: DispatchWorkItem?
+    private var saveTimer: Timer?
     private let saveQueue = DispatchQueue(label: "Gather.autosave", qos: .utility)
     private var saveRevision = 0
     lazy var backups = LocalBackups(directory: directory)
@@ -196,16 +207,16 @@ final class BoardStore {
             let url = self.directory.appendingPathComponent("Workspace.json")
             if FileManager.default.fileExists(atPath: url.path) {
                 do {
-                    let loaded = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: url))
-                    guard loaded.version == 1, Workspace.validHierarchy(loaded.boards),
-                        loaded.boards.allSatisfy({
-                            $0.zoom.isFinite && (0.1...4).contains($0.zoom) && $0.offsetX.isFinite
-                                && $0.offsetY.isFinite && $0.cards.allSatisfy(Self.valid)
-                        })
-                    else {
-                        throw CocoaError(.fileReadCorruptFile)
+                    workspace = try LocalRead.retry {
+                        let loaded = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: url))
+                        guard loaded.version == 1, Workspace.validHierarchy(loaded.boards),
+                            loaded.boards.allSatisfy({
+                                $0.zoom.isFinite && (0.1...4).contains($0.zoom) && $0.offsetX.isFinite
+                                    && $0.offsetY.isFinite && $0.cards.allSatisfy(Self.valid)
+                            })
+                        else { throw CocoaError(.fileReadCorruptFile) }
+                        return loaded
                     }
-                    workspace = loaded
                 } catch {
                     let recovery = self.directory.appendingPathComponent(
                         "Workspace-recovered-\(Int(Date().timeIntervalSince1970)).json")
@@ -236,12 +247,18 @@ final class BoardStore {
     }
 
     func scheduleSave() {
-        saveTask?.cancel()
         saveRevision += 1
         status?("Saving…")
-        let task = DispatchWorkItem { [weak self] in self?.saveInBackground() }
-        saveTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: task)
+        if let saveTimer {
+            saveTimer.fireDate = Date(timeIntervalSinceNow: 0.4)
+        } else {
+            let timer = Timer(timeInterval: 0.4, repeats: false) { [weak self] _ in
+                self?.saveTimer = nil
+                self?.saveInBackground()
+            }
+            saveTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
     }
 
     private static func write(_ workspace: Workspace, to url: URL) throws {
@@ -270,7 +287,8 @@ final class BoardStore {
     }
 
     @discardableResult func save() -> Bool {
-        saveTask?.cancel()
+        saveTimer?.invalidate()
+        saveTimer = nil
         saveRevision += 1
         let snapshot = workspace
         let url = directory.appendingPathComponent("Workspace.json")
@@ -469,6 +487,19 @@ final class BoardStore {
         else { return nil }
         return image
     }
+    func hasAsset(_ name: String) -> Bool {
+        guard name == URL(fileURLWithPath: name).lastPathComponent else { return false }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent("Assets").appendingPathComponent(name).path,
+            isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+    func originalImageData(_ name: String) -> Data? {
+        guard hasAsset(name) else { return nil }
+        return try? Data(
+            contentsOf: directory.appendingPathComponent("Assets").appendingPathComponent(name),
+            options: .mappedIfSafe)
+    }
 
     func preview(_ name: String, pixelSize: CGFloat = 2048, crop: ImageCrop = .full) -> CGImage? {
         let vector = BoardImageIO.isSVG(name)
@@ -490,22 +521,24 @@ final class BoardStore {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.loadingImages.remove(key)
-                if let thumbnail { self.cache(thumbnail, name: key) } else { self.failedImages.insert(key) }
+                if let thumbnail {
+                    self.cache(thumbnail, name: key)
+                } else {
+                    self.failedImages.insert(key)
+                    self.imageRevision += 1
+                }
                 self.imageReady?()
             }
         }
         return fallback
     }
-
-    private static func thumbnail(_ source: CGImageSource) -> CGImage? {
-        CGImageSourceCreateThumbnailAtIndex(
-            source, 0,
-            [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 2048,
-                kCGImageSourceShouldCacheImmediately: true,
-            ] as CFDictionary)
+    func previewHasFailed(_ name: String, pixelSize: CGFloat, crop: ImageCrop) -> Bool {
+        let key =
+            BoardImageIO.isSVG(name)
+            ? BoardImageIO.vectorKey(name, level: BoardImageIO.previewLevel(pixelSize), crop: crop) : name
+        return failedImages.contains(key)
     }
+
     private func cache(_ image: CGImage, name: String) {
         previews.setObject(image, forKey: name as NSString, cost: image.bytesPerRow * image.height)
         imageRevision += 1
@@ -553,20 +586,12 @@ final class BoardStore {
     }
 
     func card(for image: PreparedImage, at point: CGPoint) -> Card {
-        if BoardImageIO.isSVG(image.asset) {
-            let scale = max(
-                min(440 / image.size.width, 440 / image.size.height),
-                40 / min(image.size.width, image.size.height))
-            return Card(
-                x: point.x, y: point.y, width: max(40, image.size.width * scale),
-                height: max(40, image.size.height * scale), asset: image.asset, sourceURL: image.sourceURL)
-        }
-        let ratio = image.size.height / image.size.width
-        let height = min(440.0, 440 * ratio)
-        let width = height / ratio
+        let scale = max(
+            min(440 / image.size.width, 440 / image.size.height),
+            40 / min(image.size.width, image.size.height))
         return Card(
-            x: point.x, y: point.y, width: max(40, width), height: max(40, height), asset: image.asset,
-            sourceURL: image.sourceURL)
+            x: point.x, y: point.y, width: max(40, image.size.width * scale),
+            height: max(40, image.size.height * scale), asset: image.asset, sourceURL: image.sourceURL)
     }
 
     func imageCard(_ image: NSImage, at point: CGPoint) throws -> Card {
@@ -574,16 +599,12 @@ final class BoardStore {
             let png = bitmap.representation(using: .png, properties: [:]), bitmap.pixelsWide > 0,
             bitmap.pixelsHigh > 0
         else { throw CocoaError(.fileReadUnknown) }
+        let decoded = try BoardImageIO.decode(png)
         let name = UUID().uuidString + ".png"
         try png.write(
             to: directory.appendingPathComponent("Assets").appendingPathComponent(name), options: .atomic)
-        if let source = CGImageSourceCreateWithData(png as CFData, nil), let preview = Self.thumbnail(source)
-        {
-            cache(preview, name: name)
-        }
-        let ratio = Double(bitmap.pixelsHigh) / Double(bitmap.pixelsWide)
-        let width = min(440.0, max(140, 440 / max(1, ratio)))
-        return Card(x: point.x, y: point.y, width: width, height: max(40, width * ratio), asset: name)
+        cache(decoded.preview, name: name)
+        return card(for: PreparedImage(asset: name, preview: decoded.preview, size: decoded.size), at: point)
     }
 
     func portableData() throws -> Data {

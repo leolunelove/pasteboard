@@ -192,6 +192,12 @@ enum BoardImageIO {
         let size: CGSize
         let fileExtension: String
     }
+    static func pasteboardType(for data: Data) -> NSPasteboard.PasteboardType? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let type = CGImageSourceGetType(source)
+        else { return nil }
+        return .init(type as String)
+    }
     static func previewLevel(_ size: CGFloat) -> Int {
         let pixels = size.isFinite ? min(4096, max(512, size)) : 2048
         return pixels <= 512 ? 512 : pixels <= 1024 ? 1024 : pixels <= 2048 ? 2048 : 4096
@@ -204,13 +210,28 @@ enum BoardImageIO {
             }
             return Decoded(preview: try svg.rasterized(maxPixel: 1024), size: svg.size, fileExtension: "svg")
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-            let image = thumbnail(source, maxPixel: 2048)
-        else { throw CocoaError(.fileReadCorruptFile) }
+        let (source, image) = try LocalRead.retry {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                let image = thumbnail(source, maxPixel: 2048)
+            else { throw CocoaError(.fileReadCorruptFile) }
+            return (source, image)
+        }
         let ext =
             CGImageSourceGetType(source).flatMap { UTType($0 as String)?.preferredFilenameExtension } ?? "png"
-        return Decoded(
-            preview: image, size: CGSize(width: image.width, height: image.height), fileExtension: ext)
+        // Thumbnail rounding must not change the original's aspect ratio.
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue ?? Double(image.width)
+        let height =
+            (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue ?? Double(image.height)
+        let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        let rotated = [5, 6, 7, 8].contains(orientation)
+        let size = rotated ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        guard width.isFinite, height.isFinite, width > 0, height > 0,
+            max(width, height) / min(width, height) < 2499
+        else {
+            throw SVGImage.error("Use a tighter crop for this very narrow image.")
+        }
+        return Decoded(preview: image, size: size, fileExtension: ext)
     }
     static func thumbnail(_ source: CGImageSource, maxPixel: Int) -> CGImage? {
         CGImageSourceCreateThumbnailAtIndex(

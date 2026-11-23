@@ -1,4 +1,4 @@
-PASTEBOARD 0.17.1
+PASTEBOARD 0.19.0
 A visual worktable for Mac.
 
 WORK IN PROGRESS
@@ -17,6 +17,12 @@ checksum and app identity, saves your boards, installs, and relaunches.
 A failed verification leaves the installed app unchanged. The installer
 restores the previous app if it cannot launch the replacement.
 Checking and downloading updates requires an internet connection.
+
+APPEARANCE AND ARRANGEMENT
+Choose System, Light or Dark at the bottom of the sidebar. Images and exports
+keep their original colours. Use Arrange to align or evenly space a selection.
+Groups stay together. Shift-Command-0 fits the selected items. Click the zoom
+percentage for presets and fitting options. Escape cancels a move or resize.
 
 YOUR BOARDS
 Boards and images save locally on your Mac. Automatic local backups and

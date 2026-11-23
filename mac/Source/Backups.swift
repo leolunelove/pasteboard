@@ -15,6 +15,7 @@ final class LocalBackups {
     let folder: URL
     private var lastDate = Date.distantPast
     private var lastFingerprint: String?
+    private var loadedPreviousState = false
     init(directory: URL) {
         self.directory = directory
         assets = directory.appendingPathComponent("Assets")
@@ -42,6 +43,19 @@ final class LocalBackups {
     // Called only on BoardStore's serial save queue. Assets are immutable, so
     // hard links make each checkpoint independently restorable without duplicating bytes.
     func capture(_ workspace: Workspace, force: Bool = false, now: Date = Date()) throws {
+        if !loadedPreviousState {
+            loadedPreviousState = true
+            if let latest = records().first,
+                let data = try? Data(
+                    contentsOf: folder.appendingPathComponent(latest.folderName).appendingPathComponent(
+                        "Workspace.json")),
+                let previous = try? JSONDecoder().decode(Workspace.self, from: data),
+                let hash = try? fingerprint(previous)
+            {
+                lastDate = latest.created
+                lastFingerprint = hash
+            }
+        }
         let hash = try fingerprint(workspace)
         guard hash != lastFingerprint else { return }
         guard force || now.timeIntervalSince(lastDate) >= 300 else { return }

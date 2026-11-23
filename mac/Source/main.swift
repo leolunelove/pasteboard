@@ -17,6 +17,12 @@ func waitFor(_ condition: () -> Bool, timeout: Double = 10, file: String = #file
 }
 
 func selfTest() throws {
+    let interactionDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "Pasteboard-interactions-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: interactionDirectory) }
+    try interactionTest(directory: interactionDirectory.appendingPathComponent("pointer"))
+    try arrangementTest(directory: interactionDirectory.appendingPathComponent("arrange"))
+    try imagePipelineTest(directory: interactionDirectory.appendingPathComponent("image-pipeline"))
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "Gather-test-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
