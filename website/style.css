@@ -295,6 +295,14 @@ h3 {
   font-size: 14px;
   color: var(--muted);
 }
+.creator-credit a {
+  color: #242629;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.creator-credit a:hover {
+  color: var(--blue);
+}
 dialog {
   color: #242629;
   width: min(486px, calc(100% - 32px));
