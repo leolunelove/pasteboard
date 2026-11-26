@@ -96,6 +96,6 @@ scripts/     Release packaging helper
 
 Release ZIPs live in [GitHub Releases](https://github.com/leolunelove/pasteboard/releases), rather than the source tree. The demonstration board is sample content. No personal boards, imported user images, local backups or credentials are included here.
 
-The website is hosted on [GitHub Pages](https://leolunelove.github.io/pasteboard/). The **Publish website** workflow deploys `website/` when its files change on `main`, when a release is published, or when run manually. The download button uses the latest GitHub release; the app updater uses the matching manifest from that same release.
+The website is hosted on [GitHub Pages](https://leolunelove.github.io/pasteboard/). The **Publish website** workflow deploys `website/` when its files change on `main`, or when run manually. The download button uses the latest GitHub release; the app updater uses the matching manifest from that same release.
 
 To prepare a release after building, run `python3 scripts/package-release.py`. Publish the generated ZIP and update manifest together in a GitHub release with a matching `vX.Y.Z` tag, marked as the latest release. See [release instructions](scripts/RELEASING.md).

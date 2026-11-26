@@ -6,8 +6,6 @@ on:
     paths:
       - website/**
       - .github/workflows/pages.yml
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -17,18 +15,14 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  PAGES_ARTIFACT: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    env:
-      PAGES_ARTIFACT: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      artifact_name: ${{ env.PAGES_ARTIFACT }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -39,33 +33,19 @@ jobs:
         with:
           path: website
           name: ${{ env.PAGES_ARTIFACT }}
-      - name: Wait for artifact metadata
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import json, os, time, urllib.parse, urllib.request
-          name = os.environ['PAGES_ARTIFACT']
-          url = (os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GITHUB_REPOSITORY']
-                 + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '/artifacts?name='
-                 + urllib.parse.quote(name))
-          request = urllib.request.Request(url, headers={
-              'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-              'Accept': 'application/vnd.github+json',
-              'Cache-Control': 'no-cache',
-          })
-          for attempt in range(12):
-              with urllib.request.urlopen(request, timeout=20) as response:
-                  artifacts = json.load(response)['artifacts']
-              if any(item['name'] == name and not item['expired'] for item in artifacts):
-                  print('Pages artifact is ready.')
-                  break
-              time.sleep(5)
-          else:
-              raise SystemExit('Pages artifact metadata did not become available; retry this workflow.')
-          PY
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v4
         with:
-          artifact_name: ${{ env.PAGES_ARTIFACT }}
+          artifact_name: ${{ needs.build.outputs.artifact_name }}
