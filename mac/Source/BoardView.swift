@@ -9,6 +9,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
     var onViewport: (() -> Void)?
     var onRequestPage: (() -> Void)?
+    var onOpenSocialPost: ((UUID, UUID) -> Void)?
     var onSelection: (() -> Void)?
     var onSidebarHover: ((CGPoint, Set<UUID>) -> UUID?)?
     var onSidebarDrop: ((UUID, Set<UUID>) -> Bool)?
@@ -953,6 +954,15 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             return !isCropping && editor == nil && !hasPointerInteraction
                 && mode.canApply(to: store.board, selection: selection)
         }
+        if menuItem.action == #selector(markReadyToPost(_:)) {
+            return !isCropping && !hasPointerInteraction
+                && store.board.cards.contains { selection.contains($0.id) && $0.asset != nil }
+        }
+        if menuItem.action == #selector(previewSocialPost(_:))
+            || menuItem.action == #selector(unmarkReadyToPost(_:))
+        {
+            return !isCropping && !hasPointerInteraction && store.selectedPost(selection) != nil
+        }
         if hasPointerInteraction { return false }
         if menuItem.action == #selector(recolourSVG(_:)) {
             return !isCropping && svgColourCandidate.map { !store.board.lockedIDs.contains($0.id) } == true
@@ -1386,6 +1396,24 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         onSelection?()
         let menu = NSMenu()
         if !selection.isEmpty {
+            if let post = store.selectedPost(selection) {
+                let preview = menu.addItem(
+                    withTitle: "Preview Social Post…", action: #selector(previewSocialPost(_:)),
+                    keyEquivalent: "")
+                preview.target = self
+                let status = menu.addItem(
+                    withTitle: post.draft.isReady ? "Unmark Ready to Post" : "Mark Ready to Post…",
+                    action: post.draft.isReady
+                        ? #selector(unmarkReadyToPost(_:)) : #selector(markReadyToPost(_:)), keyEquivalent: ""
+                )
+                status.target = self
+            } else if store.board.cards.contains(where: { selection.contains($0.id) && $0.asset != nil }) {
+                let item = menu.addItem(
+                    withTitle: "Mark Ready to Post…", action: #selector(markReadyToPost(_:)),
+                    keyEquivalent: "")
+                item.target = self
+            }
+            menu.addItem(.separator())
             if svgColourCandidate != nil {
                 let item = menu.addItem(
                     withTitle: "Recolour SVG…", action: #selector(recolourSVG(_:)), keyEquivalent: "")

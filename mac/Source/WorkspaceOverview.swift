@@ -7,6 +7,7 @@ extension BoardStore {
 }
 
 final class PagePreviewButton: NSButton {
+    var subtitle: String?
     var page: Board
     unowned let store: BoardStore
     init(page: Board, store: BoardStore, target: AnyObject, action: Selector) {
@@ -76,7 +77,7 @@ final class PagePreviewButton: NSButton {
                 .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
                 .foregroundColor: NSColor.pasteboardInk,
             ])
-        ("\(page.cards.count) \(page.cards.count == 1 ? "item" : "items")" as NSString).draw(
+        ((subtitle ?? "\(page.cards.count) \(page.cards.count == 1 ? "item" : "items")") as NSString).draw(
             at: CGPoint(x: 18, y: bounds.height - 30),
             withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.pasteboardMuted])
         if window?.firstResponder === self {
@@ -97,6 +98,14 @@ final class WorkspaceOverview: NSView {
     private let create = NSButton(title: "New Page", target: nil, action: nil)
     private let empty = NSTextField(
         wrappingLabelWithString: "A little room for your ideas.\nCreate a page, or paste to start one.")
+    private let readyHeading = NSTextField(labelWithString: "Ready to post")
+    private let readyDetail = NSTextField(
+        labelWithString: "Images and frames you’ve marked across this workspace.")
+    private let readyEmpty = NSTextField(
+        wrappingLabelWithString: "Select an image or frame on a page, then right-click → Mark Ready to Post.")
+    private var readyTiles: [PagePreviewButton] = []
+    private var readySnapshot: [SocialPost] = []
+    var openPost: ((UUID, UUID) -> Void)?
     private var tiles: [PagePreviewButton] = []
     private var pageSnapshot: [Board] = []
     private var rootID: UUID?
@@ -125,12 +134,39 @@ final class WorkspaceOverview: NSView {
         empty.font = .systemFont(ofSize: 18)
         empty.textColor = .pasteboardMuted
         empty.alignment = .center
-        for view in [heading, detail, create, empty] { document.addSubview(view) }
+        readyHeading.font = .systemFont(ofSize: 26, weight: .semibold)
+        readyHeading.textColor = .pasteboardInk
+        readyDetail.font = .systemFont(ofSize: 14)
+        readyDetail.textColor = .pasteboardMuted
+        readyEmpty.font = .systemFont(ofSize: 14)
+        readyEmpty.textColor = .pasteboardMuted
+        for view in [heading, detail, create, empty, readyHeading, readyDetail, readyEmpty] {
+            document.addSubview(view)
+        }
         setAccessibilityLabel("Workspace page overview")
     }
     required init?(coder: NSCoder) { fatalError() }
     func show(pages: [Board], store: BoardStore) {
-        guard rootID != store.board.id || pageSnapshot != pages else { return }
+        let posts = store.readyPosts(in: store.board.id)
+        guard rootID != store.board.id || pageSnapshot != pages || readySnapshot != posts else { return }
+        readySnapshot = posts
+        for tile in readyTiles { tile.removeFromSuperview() }
+        readyTiles = []
+        for (index, post) in posts.enumerated() {
+            let preview = Board(name: post.title, cards: post.cards)
+            let tile = PagePreviewButton(
+                page: preview, store: store, target: self, action: #selector(openReady(_:)))
+            tile.tag = index
+            tile.subtitle =
+                post.isComplete
+                ? post.pageName + " · " + post.draft.platform.title : "Missing frame items · Review"
+            tile.setAccessibilityLabel("Preview ready post, \(post.pageName), \(post.title)")
+            tile.toolTip = "Preview post and edit caption"
+            readyTiles.append(tile)
+            document.addSubview(tile)
+        }
+        readyHeading.stringValue = posts.isEmpty ? "Ready to post" : "Ready to post · \(posts.count)"
+        readyEmpty.isHidden = !posts.isEmpty
         rootID = store.board.id
         pageSnapshot = pages
         for tile in tiles { tile.removeFromSuperview() }
@@ -152,7 +188,7 @@ final class WorkspaceOverview: NSView {
         empty.isHidden = !pages.isEmpty
         needsLayout = true
     }
-    func refreshImages() { for tile in tiles { tile.needsDisplay = true } }
+    func refreshImages() { for tile in tiles + readyTiles { tile.needsDisplay = true } }
     override func layout() {
         super.layout()
         scroll.frame = bounds
@@ -161,18 +197,33 @@ final class WorkspaceOverview: NSView {
         let gap: CGFloat = 20
         let margin: CGFloat = 28
         let tileWidth = max(180, (width - margin * 2 - CGFloat(columns - 1) * gap) / CGFloat(columns))
-        heading.frame = CGRect(x: margin, y: 28, width: max(180, width - 210), height: 35)
-        detail.frame = CGRect(x: margin, y: 70, width: max(1, width - margin * 2), height: 22)
-        create.frame = CGRect(x: width - 138, y: 28, width: 110, height: 32)
+        readyHeading.frame = CGRect(x: margin, y: 28, width: width - margin * 2, height: 35)
+        readyDetail.frame = CGRect(x: margin, y: 70, width: width - margin * 2, height: 22)
+        readyEmpty.frame = CGRect(x: margin, y: 110, width: width - margin * 2, height: 50)
+        for (index, tile) in readyTiles.enumerated() {
+            tile.frame = CGRect(
+                x: margin + CGFloat(index % columns) * (tileWidth + gap),
+                y: 115 + CGFloat(index / columns) * 240, width: tileWidth, height: 220)
+        }
+        let readyRows = (readyTiles.count + columns - 1) / columns
+        let pageTop: CGFloat = readyTiles.isEmpty ? 190 : 140 + CGFloat(readyRows) * 240
+        heading.frame = CGRect(x: margin, y: pageTop, width: max(180, width - 210), height: 35)
+        detail.frame = CGRect(x: margin, y: pageTop + 42, width: max(1, width - margin * 2), height: 22)
+        create.frame = CGRect(x: width - 138, y: pageTop, width: 110, height: 32)
         for (index, tile) in tiles.enumerated() {
             tile.frame = CGRect(
                 x: margin + CGFloat(index % columns) * (tileWidth + gap),
-                y: 120 + CGFloat(index / columns) * 240, width: tileWidth, height: 220)
+                y: pageTop + 92 + CGFloat(index / columns) * 240, width: tileWidth, height: 220)
         }
         let rows = (tiles.count + columns - 1) / columns
-        let height = max(bounds.height, 140 + CGFloat(rows) * 240)
+        let height = max(bounds.height, pageTop + 160 + CGFloat(rows) * 240)
         document.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        empty.frame = CGRect(x: margin, y: 180, width: width - margin * 2, height: 100)
+        empty.frame = CGRect(x: margin, y: pageTop + 120, width: width - margin * 2, height: 100)
+    }
+    @objc private func openReady(_ sender: NSButton) {
+        guard readySnapshot.indices.contains(sender.tag) else { return }
+        let post = readySnapshot[sender.tag]
+        openPost?(post.boardID, post.anchorID)
     }
     @objc private func addPage(_ sender: Any?) { newPage?() }
     @objc private func open(_ sender: NSButton) {

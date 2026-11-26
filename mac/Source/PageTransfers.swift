@@ -35,11 +35,20 @@ extension BoardStore {
         let existingIDs = Set(destination.cards.map(\.id))
         let existingGroups = Set(destination.cards.compactMap(\.groupID))
         var groups: [UUID: UUID] = [:]
+        var identities: [UUID: UUID] = [:]
         for i in moved.indices {
-            if existingIDs.contains(moved[i].id) { moved[i].id = UUID() }
+            let previousID = moved[i].id
+            if existingIDs.contains(previousID) { moved[i].id = UUID() }
+            identities[previousID] = moved[i].id
             if let group = moved[i].groupID, existingGroups.contains(group) {
                 if groups[group] == nil { groups[group] = UUID() }
                 moved[i].groupID = groups[group]
+            }
+        }
+        for i in moved.indices {
+            if var draft = moved[i].socialPost {
+                draft.memberIDs = draft.memberIDs.map { identities[$0] ?? $0 }
+                moved[i].socialPost = draft
             }
         }
         moved = Self.placeTransferred(moved, on: destination, viewport: viewport)

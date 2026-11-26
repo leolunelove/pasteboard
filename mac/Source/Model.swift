@@ -55,6 +55,7 @@ struct Card: Codable, Equatable {
     var sourceURL: String?
     var hex: String?
     var isLocked: Bool { locked == true }
+    var socialPost: SocialDraft?
     var crop: ImageCrop?
     var imageCrop: ImageCrop { crop ?? .full }
     var fullImageRect: CGRect {
@@ -106,6 +107,7 @@ struct Card: Codable, Equatable {
             copy.x += offset.x
             copy.y += offset.y
             copy.locked = nil
+            copy.socialPost = nil
             if let group = card.groupID {
                 if groups[group] == nil { groups[group] = UUID() }
                 copy.groupID = groups[group]
@@ -276,6 +278,8 @@ final class BoardStore {
             && (card.crop == nil
                 || (card.asset != nil && card.imageCrop.isValid && card.fullImageRect.width < 100_000
                     && card.fullImageRect.height < 100_000))
+            && (card.socialPost == nil
+                || (card.socialPost!.isValid && card.socialPost!.memberIDs.contains(card.id)))
             && (card.hex == nil
                 || (card.asset == nil && card.text == nil && card.crop == nil
                     && SwatchColor.normalized(card.hex!) == card.hex))

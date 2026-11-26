@@ -14,3 +14,9 @@ Do not replace assets under an already published version. Publish a new version 
 The installer accepts only the official repository’s versioned release URL. It restricts redirects to GitHub’s HTTPS release CDN, bounds download and unpacked sizes, rejects unsafe ZIP paths and symlinks, checks the app’s bundle identifier/version/code signature, and stages beside the installed app. The helper waits for the old process to exit before replacement. Saved boards live outside the app bundle.
 
 These preview builds use ad-hoc code signing. SHA-256 verifies integrity against the HTTPS release manifest; it is not a Developer ID publisher signature. Apple notarization and Developer ID signing remain future distribution work.
+
+## Build and publish from GitHub
+
+The **Publish Mac release** Actions workflow can build the committed source on an Apple Silicon Mac runner, run the native checks, package the ZIP and updater manifest, and upload both before publishing the release. Run it manually from `main`, entering the version in `mac/Info.plist`. It refuses an existing release version. If asset upload fails, the release stays a draft.
+
+Afterward, copy the exact `website/release.json` from the workflow’s `release-metadata` artifact into a follow-up commit on `main` (or derive it from the published manifest). This triggers the Pages workflow with the matching public download checksum and size. Verify the public download and updater before announcing it.

@@ -123,7 +123,8 @@ final class LocalBackups {
             Workspace.self, from: Data(contentsOf: source.appendingPathComponent("Workspace.json")))
         guard workspace.version == 1, Workspace.validHierarchy(workspace.boards),
             workspace.boards.allSatisfy({
-                $0.cards.allSatisfy(BoardStore.valid) && $0.zoom.isFinite && (0.1...4).contains($0.zoom)
+                Set($0.cards.map(\.id)).count == $0.cards.count && $0.cards.allSatisfy(BoardStore.valid)
+                    && $0.zoom.isFinite && (0.1...4).contains($0.zoom)
                     && $0.offsetX.isFinite && $0.offsetY.isFinite
             })
         else { throw CocoaError(.fileReadCorruptFile) }
@@ -143,8 +144,13 @@ final class LocalBackups {
             board.parentID = original.parentID.flatMap { ids[$0] }
             board.name += " (restored)"
             var groups: [UUID: UUID] = [:]
+            let cardIDs = Dictionary(uniqueKeysWithValues: board.cards.map { ($0.id, UUID()) })
             for i in board.cards.indices {
-                board.cards[i].id = UUID()
+                board.cards[i].id = cardIDs[board.cards[i].id]!
+                if var draft = board.cards[i].socialPost {
+                    draft.memberIDs = draft.memberIDs.map { cardIDs[$0] ?? $0 }
+                    board.cards[i].socialPost = draft
+                }
                 if let asset = board.cards[i].asset { board.cards[i].asset = names[asset] }
                 if let group = board.cards[i].groupID {
                     if groups[group] == nil { groups[group] = UUID() }

@@ -1,6 +1,9 @@
-Workspaces now open to a visual overview of their pages.
-Existing workspace-board items move into an inner Board page, with a backup saved first.
-Paste Figma Copy as SVG or Copy as PNG, including wrapped HTML clipboard artwork.
-Right-click an SVG and choose Recolour SVG to change its fills and strokes.
-SVG recolouring preserves originals for Undo, shared copies, crop and source links.
+Mark images and selections of images and notes as Ready to Post.
+Every workspace now shows its ready posts above its pages.
+Preview Instagram Feed and Story, LinkedIn and X with a saved draft caption.
+Copy or save the complete preview, or export only the artwork with transparency.
+Copy captions separately as editable text; save drafts locally and reopen them later.
+Choose original, square, portrait or landscape preview proportions, with fit or centre crop.
+Ready badges identify marked artwork. Missing frame items block incomplete exports.
+Readiness and captions support Undo, portable boards and local backups. Duplicates start unmarked.
 Pasteboard is still an early preview. Keep a backup of important boards.

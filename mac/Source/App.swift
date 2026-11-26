@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var zoomButton: NSButton!
     var groupButton: NSButton!
     private let overview = WorkspaceOverview()
+    private var socialWindow: SocialPreviewWindow?
     private var boardControls: [NSView] = []
     private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
@@ -153,6 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             overview.topAnchor.constraint(equalTo: canvas.topAnchor),
             overview.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
         ])
+        canvas.onOpenSocialPost = { [weak self] board, anchor in
+            self?.openSocialPost(boardID: board, anchorID: anchor)
+        }
+        overview.openPost = { [weak self] board, anchor in
+            self?.openSocialPost(boardID: board, anchorID: anchor)
+        }
         overview.openPage = { [weak self] in self?.navigate(to: $0) }
         overview.newPage = { [weak self] in self?.newPage(nil) }
         overview.renamePage = { [weak self] in self?.rename(id: $0) }
@@ -548,6 +555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updateCount()
         updateViewport()
         searchWindow?.reload()
+        socialWindow?.refreshFromStore()
     }
     private func revealActiveSidebarRow() {
         window?.contentView?.layoutSubtreeIfNeeded()
@@ -985,8 +993,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func redo(_ sender: Any?) { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
     @objc func saveNow(_ sender: Any?) {
+        guard socialWindow?.flush() != false else { return }
         canvas.finishEditing()
         store.save()
+    }
+    private func openSocialPost(boardID: UUID, anchorID: UUID) {
+        guard socialWindow?.flush() != false,
+            let post = store.socialPost(boardID: boardID, anchorID: anchorID)
+        else { return }
+        socialWindow?.close()
+        socialWindow = SocialPreviewWindow(store: store, post: post)
+        socialWindow?.onShowBoard = { [weak self] board, ids in
+            guard let self else { return }
+            navigate(to: board)
+            canvas.selection = ids
+            canvas.fitSelection(nil)
+            canvas.needsDisplay = true
+        }
+        socialWindow?.present()
     }
     @objc func showWindow(_ sender: Any?) { window.makeKeyAndOrderFront(nil) }
     @objc func showUpdates(_ sender: Any?) {
@@ -1083,6 +1107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(edit, "Paste", #selector(NSText.paste(_:)), "v")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         item(edit, "Duplicate", #selector(BoardView.duplicate(_:)), "d", target: canvas)
+        item(edit, "Mark Ready to Post…", #selector(BoardView.markReadyToPost(_:)), target: canvas)
+        item(edit, "Preview Social Post…", #selector(BoardView.previewSocialPost(_:)), target: canvas)
+        item(edit, "Unmark Ready to Post", #selector(BoardView.unmarkReadyToPost(_:)), target: canvas)
         item(edit, "Recolour SVG…", #selector(BoardView.recolourSVG(_:)), target: canvas)
         item(edit, "Edit Colour Swatch…", #selector(BoardView.editColourSwatch(_:)), target: canvas)
         item(edit, "Copy HEX", #selector(BoardView.copyHex(_:)), target: canvas)
@@ -1165,6 +1192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return saveBeforeLeaving() ? .terminateNow : .terminateCancel
     }
     func saveBeforeLeaving() -> Bool {
+        guard socialWindow?.flush() != false else { return false }
         canvas.cancelPointerInteraction()
         canvas.cancelCropping(nil)
         store.backupNow()

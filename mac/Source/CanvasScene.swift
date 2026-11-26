@@ -12,6 +12,7 @@ final class CanvasScene {
         let outline = CAShapeLayer()
         let grip = CAShapeLayer()
         let lock = CATextLayer()
+        let ready = CATextLayer()
         let placeholder = CATextLayer()
         var card: Card?
         var selected = false
@@ -49,6 +50,12 @@ final class CanvasScene {
             lock.cornerRadius = 4
             lock.masksToBounds = true
             layer.addSublayer(lock)
+            ready.alignmentMode = .center
+            ready.backgroundColor = NSColor(hex: 0x24774E).cgColor
+            ready.cornerRadius = 4
+            ready.masksToBounds = true
+            ready.isHidden = true
+            layer.addSublayer(ready)
         }
     }
     private var artwork: [UUID: Artwork] = [:]
@@ -172,6 +179,9 @@ final class CanvasScene {
                             updateSelection(
                                 art, bounds: CGRect(origin: .zero, size: card.rect.size), zoom: zoom)
                         }
+                    }
+                    for art in artwork.values where !art.ready.isHidden {
+                        updateReady(art, zoom: zoom, backingScale: backingScale)
                     }
                     for art in artwork.values where !art.lock.isHidden {
                         updateLock(art, zoom: zoom, backingScale: backingScale)
@@ -298,6 +308,8 @@ final class CanvasScene {
                 art.grip.isHidden = !selected || selection.count != 1 || locked.contains(card.id)
                 art.lock.isHidden = !locked.contains(card.id) || card.groupID != nil
                 if !art.lock.isHidden { updateLock(art, zoom: zoom, backingScale: backingScale) }
+                art.ready.isHidden = card.socialPost?.isReady != true
+                if !art.ready.isHidden { updateReady(art, zoom: zoom, backingScale: backingScale) }
                 if selected && (sizeChanged || !art.selected || previousZoom != zoom) {
                     updateSelection(art, bounds: bounds, zoom: zoom)
                 }
@@ -481,6 +493,17 @@ final class CanvasScene {
                 x: bounds.maxX - 4 / zoom, y: bounds.maxY - 4 / zoom, width: 8 / zoom, height: 8 / zoom),
             cornerWidth: 2 / zoom, cornerHeight: 2 / zoom, transform: nil)
         art.grip.lineWidth = 1.6 / zoom
+    }
+    private func updateReady(_ art: Artwork, zoom: CGFloat, backingScale: CGFloat) {
+        art.ready.frame = CGRect(
+            x: (art.lock.isHidden ? 5 : 34) / zoom, y: 5 / zoom, width: 66 / zoom, height: 20 / zoom)
+        art.ready.cornerRadius = 4 / zoom
+        art.ready.contentsScale = backingScale * zoom
+        art.ready.string = NSAttributedString(
+            string: "✓ Ready",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11 / zoom, weight: .medium), .foregroundColor: NSColor.white,
+            ])
     }
     private func updateLock(_ art: Artwork, zoom: CGFloat, backingScale: CGFloat) {
         art.lock.frame = CGRect(x: 5 / zoom, y: 5 / zoom, width: 24 / zoom, height: 20 / zoom)

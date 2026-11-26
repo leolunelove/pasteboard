@@ -1,0 +1,71 @@
+name: Publish Mac release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from mac/Info.plist (X.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate release identity
+        run: |
+          python3 - <<'PY'
+          import json, os, plistlib, re, subprocess
+          from pathlib import Path
+          info = plistlib.loads(Path('mac/Info.plist').read_bytes())
+          version = info['CFBundleShortVersionString']
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version)
+          assert version == os.environ['EXPECTED_VERSION'], 'Requested version differs from source'
+          assert subprocess.check_output(['uname', '-m'], text=True).strip() == 'arm64'
+          result = subprocess.run(['gh', 'release', 'view', 'v' + version], capture_output=True)
+          assert result.returncode != 0, 'This version already has a release; never replace published assets'
+          tag = subprocess.run(['gh', 'api', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/ref/tags/v' + version], capture_output=True)
+          assert tag.returncode != 0, 'The version tag already exists; choose a new version'
+          latest = subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GITHUB_REPOSITORY'] + '/releases/latest', '--jq', '.tag_name'], text=True).strip()
+          subprocess.run(['gh', 'release', 'download', latest, '--pattern', 'Pasteboard-Update.json', '--output', '/tmp/previous-pasteboard-update.json'], check=True)
+          previous = json.loads(Path('/tmp/previous-pasteboard-update.json').read_text())
+          assert int(info['CFBundleVersion']) > int(previous['build']), 'Build number must increase'
+          PY
+      - name: Build the Mac app
+        run: ./mac/build.sh
+      - name: Run native checks
+        run: ./mac/Pasteboard.app/Contents/MacOS/Pasteboard --self-test
+      - name: Package app and matching update manifest
+        run: python3 scripts/package-release.py
+      - name: Publish both assets together
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          version = os.environ['EXPECTED_VERSION']
+          notes = '# Ready to post\n\n' + '\n'.join('- ' + line for line in Path('mac/ReleaseNotes.txt').read_text().splitlines() if line.strip()) + '\n'
+          Path('/tmp/pasteboard-release-notes.md').write_text(notes)
+          subprocess.run(['gh', 'release', 'create', 'v' + version, '--draft', '--target', os.environ['GITHUB_SHA'], '--title', 'Pasteboard ' + version, '--notes-file', '/tmp/pasteboard-release-notes.md'], check=True)
+          subprocess.run(['gh', 'release', 'upload', 'v' + version, 'release/Pasteboard-Mac.zip', 'release/Pasteboard-Update.json'], check=True)
+          subprocess.run(['gh', 'release', 'edit', 'v' + version, '--draft=false', '--latest'], check=True)
+          PY
+      - name: Keep release metadata for verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: |
+            release/Pasteboard-Update.json
+            website/release.json
