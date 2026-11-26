@@ -8,6 +8,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         didSet { selection = store.board.expandedSelection(selection) }
     }
     var onViewport: (() -> Void)?
+    var onRequestPage: (() -> Void)?
     var onSelection: (() -> Void)?
     var onSidebarHover: ((CGPoint, Set<UUID>) -> UUID?)?
     var onSidebarDrop: ((UUID, Set<UUID>) -> Bool)?
@@ -93,7 +94,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         layer?.masksToBounds = true
         layer?.addSublayer(scene.root)
         store.imageReady = { [weak self] in self?.needsDisplay = true }
-        registerForDraggedTypes([.fileURL, .string] + imageTypes)
+        registerForDraggedTypes([.fileURL, .string, .html] + imageTypes)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(
@@ -730,6 +731,10 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
 
     @objc func addText(_ sender: Any?) {
+        if store.showsWorkspaceOverview {
+            onRequestPage?()
+            guard !store.showsWorkspaceOverview else { return }
+        }
         addNote(at: placement(for: CGSize(width: 300, height: 180), near: insertionPoint()))
     }
     func addNote(at point: CGPoint) {
@@ -949,6 +954,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 && mode.canApply(to: store.board, selection: selection)
         }
         if hasPointerInteraction { return false }
+        if menuItem.action == #selector(recolourSVG(_:)) {
+            return !isCropping && svgColourCandidate.map { !store.board.lockedIDs.contains($0.id) } == true
+        }
         if menuItem.action == #selector(editColourSwatch(_:)) {
             return !isCropping && swatchCandidate != nil
                 && !store.board.lockedIDs.contains(swatchCandidate!.id)
@@ -1116,6 +1124,10 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         paste(from: .general)
     }
     func paste(from pb: NSPasteboard) {
+        if store.showsWorkspaceOverview {
+            onRequestPage?()
+            guard !store.showsWorkspaceOverview else { return }
+        }
         cancelCropping(nil)
         finishEditing()
         stopZoomAnimation()
@@ -1261,6 +1273,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 item.data(forType: $0)
             }).first(where: { !$0.isEmpty }) {
                 images.append(data)
+            } else if let embedded = DesignClipboard.embeddedImage(item) {
+                images.append(embedded)
             } else if let type = item.availableType(from: imageTypes), let data = item.data(forType: type),
                 !data.isEmpty
             {
@@ -1284,6 +1298,16 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         if receiveImageItems(
             pb.pasteboardItems ?? [], at: point, source: SourceLink.clipboard(pb), avoidOverlap: avoidOverlap)
         {
+            return true
+        }
+        if (pb.pasteboardItems ?? []).contains(where: DesignClipboard.nativeFigma) {
+            let alert = NSAlert()
+            alert.messageText = "Paste from Figma"
+            alert.informativeText =
+                "In Figma, right-click your selection and choose Copy/Paste as → Copy as SVG for recolourable artwork, or Copy as PNG for a complete image. Then paste here with ⌘V."
+            alert.addButton(withTitle: "OK")
+            if let window { alert.beginSheetModal(for: window) }
+            store.status?("Use Copy as SVG or Copy as PNG in Figma")
             return true
         }
         if let text = pb.string(forType: .string), !text.isEmpty {
@@ -1362,6 +1386,12 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         onSelection?()
         let menu = NSMenu()
         if !selection.isEmpty {
+            if svgColourCandidate != nil {
+                let item = menu.addItem(
+                    withTitle: "Recolour SVG…", action: #selector(recolourSVG(_:)), keyEquivalent: "")
+                item.target = self
+                menu.addItem(.separator())
+            }
             if swatchCandidate != nil {
                 for (title, action) in [
                     ("Edit Colour Swatch…", #selector(editColourSwatch(_:))),
@@ -1461,6 +1491,10 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         store.status?("Copied \(hex)")
     }
     func showSwatchEditor(card: Card?) {
+        if store.showsWorkspaceOverview {
+            onRequestPage?()
+            guard !store.showsWorkspaceOverview else { return }
+        }
         finishEditing()
         cancelCropping(nil)
         guard let window else { return }

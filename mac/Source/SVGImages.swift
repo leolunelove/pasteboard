@@ -21,7 +21,7 @@ final class SVGImage {
                 if looksLikeSVG(data) { return data }
             }
         }
-        return nil
+        return DesignClipboard.embeddedImage(item, svgOnly: true)
     }
     let original: Data
     let renderingData: Data

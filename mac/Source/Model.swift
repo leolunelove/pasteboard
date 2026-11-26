@@ -177,6 +177,7 @@ final class BoardStore {
     var changed: (() -> Void)?
     var status: ((String) -> Void)?
     var loadWarning: String?
+    private(set) var workspaceOverviewsEnabled = false
     private var saveTimer: Timer?
     private let saveQueue = DispatchQueue(label: "Gather.autosave", qos: .utility)
     private var saveRevision = 0
@@ -230,6 +231,40 @@ final class BoardStore {
         history.levelsOfUndo = 100
         history.groupsByEvent = false
         previews.totalCostLimit = 160 * 1024 * 1024
+    }
+
+    // Opt in at the application boundary; native checks can still exercise legacy boards.
+    // The entire previous layout is backed up before a single atomic replacement.
+    func enableWorkspaceOverviews() throws {
+        var next = workspace
+        let roots = next.roots.filter { !$0.cards.isEmpty }
+        if !roots.isEmpty {
+            let previous = workspace
+            for root in roots {
+                var page = root
+                page.id = UUID()
+                page.parentID = root.id
+                let names = Set(next.pages(in: root.id).map(\.name))
+                var name = "Board"
+                var number = 2
+                while names.contains(name) {
+                    name = "Board \(number)"
+                    number += 1
+                }
+                page.name = name
+                next.boards.append(page)
+                if let index = next.boards.firstIndex(where: { $0.id == root.id }) {
+                    next.boards[index].cards = []
+                }
+            }
+            try saveQueue.sync {
+                try backups.capture(previous, force: true)
+                try Self.write(next, to: directory.appendingPathComponent("Workspace.json"))
+            }
+            workspace = next
+            history.removeAllActions()
+        }
+        workspaceOverviewsEnabled = true
     }
 
     static func valid(_ card: Card) -> Bool {
@@ -467,6 +502,12 @@ final class BoardStore {
                 case .failure(let error): completion(.failure(error))
                 case .success(let boards):
                     self.workspace.boards.append(contentsOf: boards)
+                    if self.workspaceOverviewsEnabled {
+                        do { try self.enableWorkspaceOverviews() } catch {
+                            completion(.failure(error))
+                            return
+                        }
+                    }
                     if let first = boards.first { self.activate(first.id) }
                     completion(.success(()))
                 }
@@ -652,6 +693,7 @@ final class BoardStore {
             return next
         }
         workspace.boards.append(contentsOf: copies)
+        if workspaceOverviewsEnabled { try enableWorkspaceOverviews() }
         activate(copies[0].id)
     }
 }

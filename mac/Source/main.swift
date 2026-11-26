@@ -20,6 +20,8 @@ func selfTest() throws {
     let interactionDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
         "Pasteboard-interactions-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: interactionDirectory) }
+    try workspaceOverviewTest(directory: interactionDirectory.appendingPathComponent("overview"))
+    try designPasteAndColourTest(directory: interactionDirectory.appendingPathComponent("design-paste"))
     try interactionTest(directory: interactionDirectory.appendingPathComponent("pointer"))
     try arrangementTest(directory: interactionDirectory.appendingPathComponent("arrange"))
     try imagePipelineTest(directory: interactionDirectory.appendingPathComponent("image-pipeline"))

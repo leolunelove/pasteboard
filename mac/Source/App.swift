@@ -70,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let statusLabel = NSTextField(labelWithString: "Saved on this Mac")
     var zoomButton: NSButton!
     var groupButton: NSButton!
+    private let overview = WorkspaceOverview()
+    private var boardControls: [NSView] = []
     private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
     private var sidebarSignature = ""
@@ -91,8 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let testDirectory = Bundle.main.object(forInfoDictionaryKey: "GatherTestingDirectory") as? String
         showsPreviewOnLaunch = directory == nil && testDirectory == nil
         store = BoardStore(directory: directory ?? testDirectory.map { URL(fileURLWithPath: $0) })
+        do { try store.enableWorkspaceOverviews() } catch {
+            store.loadWarning =
+                "Your boards are preserved. The workspace overview could not be prepared: \(error.localizedDescription)"
+        }
         canvas = BoardView(store: store)
         super.init()
+        canvas.onRequestPage = { [weak self] in self?.ensureCanvasPage() }
         canvas.snappingEnabled = UserDefaults.standard.object(forKey: "SnapToObjects") as? Bool ?? true
         canvas.minimapEnabled = UserDefaults.standard.object(forKey: "ShowMinimap") as? Bool ?? true
     }
@@ -138,6 +145,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             footer.heightAnchor.constraint(equalToConstant: 36),
         ])
+        overview.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(overview)
+        NSLayoutConstraint.activate([
+            overview.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            overview.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            overview.topAnchor.constraint(equalTo: canvas.topAnchor),
+            overview.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
+        ])
+        overview.openPage = { [weak self] in self?.navigate(to: $0) }
+        overview.newPage = { [weak self] in self?.newPage(nil) }
+        overview.renamePage = { [weak self] in self?.rename(id: $0) }
+        overview.deletePage = { [weak self] id in
+            let item = NSMenuItem()
+            item.representedObject = id.uuidString
+            self?.deleteBoard(item)
+        }
+        overview.pasteItems = { [weak self] in self?.pasteToBoard(nil) }
+        store.imageReady = { [weak self] in
+            self?.canvas.needsDisplay = true
+            self?.overview.refreshImages()
+        }
         addLine(to: root, vertical: true, anchor: sidebar.trailingAnchor)
         addLine(to: header, vertical: false)
         makeSidebar(sidebar)
@@ -169,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.center()
         window.makeKeyAndOrderFront(nil)
         revealActiveSidebarRow()
-        window.makeFirstResponder(canvas)
+        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
         NSApp.activate(ignoringOtherApps: true)
         if let warning = store.loadWarning {
             let alert = NSAlert()
@@ -215,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         PreviewNotice.alert().beginSheetModal(for: window) { [weak self] _ in
             guard let self else { return }
             PreviewNotice.acknowledge(build: installedRelease.build)
-            window.makeFirstResponder(canvas)
+            window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
         }
     }
 
@@ -454,6 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             button.font = .systemFont(ofSize: 12, weight: .medium)
             button.contentTintColor = .pasteboardInk
         }
+        boardControls = [help, minus, plus, zoomButton!, fit]
         for view in [statusLabel, help, minus, plus, zoomButton!, fit] {
             view.translatesAutoresizingMaskIntoConstraints = false
             footer.addSubview(view)
@@ -483,6 +512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func refresh() {
+        let isOverview = store.showsWorkspaceOverview
         titleLabel.stringValue = store.board.name
         window?.title = "\(store.board.name) — Pasteboard"
         let signature =
@@ -508,7 +538,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if revealedSidebarBoard != store.board.id {
             revealedSidebarBoard = store.board.id
             revealActiveSidebarRow()
+            window?.makeFirstResponder(isOverview ? overview : canvas)
         }
+        overview.isHidden = !isOverview
+        canvas.isHidden = isOverview
+        for control in boardControls { control.isHidden = isOverview }
+        if isOverview { overview.show(pages: store.workspace.pages(in: store.board.id), store: store) }
         canvas.refresh()
         updateCount()
         updateViewport()
@@ -609,6 +644,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             "\(location)  ·  \(count) \(count == 1 ? "item" : "items")"
             + (pageCount > 0 ? "  ·  \(pageCount) pages" : "")
             + (canvas.selection.isEmpty ? "" : "  ·  \(canvas.selection.count) selected")
+        if store.showsWorkspaceOverview {
+            countLabel.stringValue = "Workspace  ·  \(pageCount) \(pageCount == 1 ? "page" : "pages")"
+        }
         let ungroup = !canvas.canGroup && canvas.canUngroup
         groupButton?.title = ungroup ? "Ungroup" : "Group"
         groupButton?.isEnabled = canvas.canGroup || canvas.canUngroup
@@ -617,9 +655,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func hoverPage(at point: CGPoint, ids: Set<UUID>) -> UUID? {
         var target: (NSView, UUID, BoardButton)?
         if let clip = sidebarScroll?.contentView, clip.bounds.contains(clip.convert(point, from: nil)) {
-            target = sidebarTargets.first {
-                $0.0.bounds.contains($0.0.convert(point, from: nil))
-                    && store.canMoveCards(ids, from: store.board.id, to: $0.1)
+            target = sidebarTargets.first { row in
+                row.0.bounds.contains(row.0.convert(point, from: nil))
+                    && store.workspace.boards.contains(where: { $0.id == row.1 && $0.parentID != nil })
+                    && store.canMoveCards(ids, from: store.board.id, to: row.1)
             }
         }
         for row in sidebarTargets { row.2.dropTarget = row.1 == target?.1 }
@@ -680,7 +719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.backgroundColor = .pasteboardCanvas
         window.contentView?.needsDisplay = true
         canvas.needsDisplay = true
-        window.makeFirstResponder(canvas)
+        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
     }
 
     private func targetID(_ sender: Any?) -> UUID? {
@@ -699,7 +738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             collapsedWorkspaces.remove(parent)
         }
         store.activate(id)
-        window.makeFirstResponder(canvas)
+        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
     }
     @objc func selectBoard(_ sender: NSButton) { if let id = targetID(sender) { navigate(to: id) } }
     @objc func toggleWorkspace(_ sender: NSButton) {
@@ -707,17 +746,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if !collapsedWorkspaces.insert(id).inserted { collapsedWorkspaces.remove(id) }
         refresh()
     }
-    @objc func addNote(_ sender: Any?) { canvas.addText(sender) }
-    @objc func addColour(_ sender: Any?) { canvas.addColourSwatch(sender) }
+    private func ensureCanvasPage() {
+        guard store.showsWorkspaceOverview else { return }
+        if let id = store.newPage(in: store.board.id, name: "Untitled page") { navigate(to: id) }
+    }
+    @objc func addNote(_ sender: Any?) {
+        ensureCanvasPage()
+        canvas.addText(sender)
+    }
+    @objc func addColour(_ sender: Any?) {
+        ensureCanvasPage()
+        canvas.addColourSwatch(sender)
+    }
     @objc func toggleGrouping(_ sender: Any?) {
         if canvas.canGroup { canvas.groupSelection(sender) } else { canvas.ungroupSelection(sender) }
-        window.makeFirstResponder(canvas)
+        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
     }
     @objc func pasteToBoard(_ sender: Any?) {
         if let text = NSApp.keyWindow?.firstResponder as? NSTextView {
             text.paste(sender)
         } else {
-            window.makeFirstResponder(canvas)
+            ensureCanvasPage()
+            window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
             canvas.paste(sender)
         }
     }
@@ -731,7 +781,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             .image, .svg, .plainText, UTType(filenameExtension: "gatherboard") ?? .data,
         ]
         panel.beginSheetModal(for: window) { [weak self] result in
-            if result == .OK { self?.canvas.importFiles(panel.urls) }
+            guard let self, result == .OK else { return }
+            if panel.urls.contains(where: { $0.pathExtension.lowercased() != "gatherboard" }) {
+                self.ensureCanvasPage()
+            }
+            self.canvas.importFiles(panel.urls)
         }
     }
     @objc func newBoard(_ sender: Any?) {
@@ -840,7 +894,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 guard let self else { return }
                 navigate(to: result.boardID)
                 window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(canvas)
+                window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
                 if let id = result.cardID { canvas.focusCards([id]) } else { canvas.fitAll(nil) }
             }
         }
@@ -1029,6 +1083,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(edit, "Paste", #selector(NSText.paste(_:)), "v")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         item(edit, "Duplicate", #selector(BoardView.duplicate(_:)), "d", target: canvas)
+        item(edit, "Recolour SVG…", #selector(BoardView.recolourSVG(_:)), target: canvas)
         item(edit, "Edit Colour Swatch…", #selector(BoardView.editColourSwatch(_:)), target: canvas)
         item(edit, "Copy HEX", #selector(BoardView.copyHex(_:)), target: canvas)
         edit.addItem(.separator())

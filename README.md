@@ -30,6 +30,9 @@ No account is needed in the app. Boards and images stay on your Mac. The website
 
 ## A little room for everything
 
+- **Figma:** use Figma’s **Copy/Paste as → Copy as SVG** for vector artwork, or **Copy as PNG**, then paste with ⌘V. Private Figma layer payloads show a clear instruction instead of becoming a note.
+- **SVG colours:** select an SVG and choose **Edit → Recolour SVG…** or right-click → **Recolour SVG…**. Choose a colour or enter its HEX value. Changes are undoable and other copies keep their original colours.
+- **Workspace overview:** click a workspace to see its pages as visual cards. Existing main-board items move into a new inner **Board** page on first launch, after saving a backup. Open, create, rename or delete pages from the overview. Pasting there starts a new page.
 - **Images and text:** paste or drop images, transparent PNGs, SVG artwork and notes. Add colour swatches with visible HEX values.
 - **Your preferred appearance:** choose System, Light or Dark at the bottom of the sidebar, or under View → Appearance. Artwork and exports keep their original colours.
 - **An infinite board:** pan, zoom, find items with Tab, or jump around using the minimap.
