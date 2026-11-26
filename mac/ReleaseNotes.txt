@@ -1,3 +1,5 @@
+Re-marking a frame keeps its saved caption and all its original members, even from a single selected item.
+Inactive drafts cannot claim artwork that belongs to another ready post.
 Mark images and selections of images and notes as Ready to Post.
 Every workspace now shows its ready posts above its pages.
 Preview Instagram Feed and Story, LinkedIn and X with a saved draft caption.

@@ -28,6 +28,12 @@ func socialPostTest(directory: URL) throws {
     try check(store.readyPosts(in: root).first?.draft.caption == "")
     store.history.redo()
     try check(store.readyPosts(in: root).first?.draft == post.draft)
+    var inactive = post.draft
+    inactive.isReady = false
+    store.updateSocialDraft(inactive, boardID: page, anchorID: post.anchorID)
+    let remarked = try store.markReady([note.id])
+    try check(remarked.anchorID == post.anchorID && remarked.draft.caption == post.draft.caption)
+    try check(remarked.draft.memberIDs == post.draft.memberIDs)
     try check(Card.copies(of: store.board.cards).allSatisfy { $0.socialPost == nil })
     let legacy = try JSONDecoder().decode(Card.self, from: JSONEncoder().encode(photo))
     try check(legacy.socialPost == nil)
@@ -107,6 +113,21 @@ func socialPostTest(directory: URL) throws {
     let transferredAnchor = reopened.board.cards.first { $0.socialPost != nil }!
     try check(transferredAnchor.id != photo.id)
     try check(reopened.socialPost(boardID: destination, anchorID: transferredAnchor.id)!.isComplete)
+    // Restoring an inactive frame must never claim artwork in another ready post.
+    let overlap = BoardStore(directory: directory.appendingPathComponent("Overlap"))
+    let a = Card(x: 0, y: 0, width: 100, height: 100, asset: photo.asset)
+    let b = Card(x: 150, y: 0, width: 100, height: 100, asset: photo.asset)
+    overlap.replaceCards([a, b], name: "Fixture")
+    var frame = try overlap.markReady([a.id, b.id])
+    frame.draft.isReady = false
+    overlap.updateSocialDraft(frame.draft, boardID: overlap.board.id, anchorID: a.id)
+    try check(
+        overlap.updateSocialDraft(SocialDraft(memberIDs: [b.id]), boardID: overlap.board.id, anchorID: b.id))
+    try check(overlap.selectedPost([b.id])!.anchorID == b.id)
+    do {
+        _ = try overlap.markReady([a.id])
+        throw BoardExport.error("Overlapping frame unexpectedly marked ready")
+    } catch { try check(error.localizedDescription.contains("overlaps")) }
     print(
         "PASS: ready posts, frame integrity, captions, undo, duplicates, persistence, page transfers, alpha and all social previews"
     )

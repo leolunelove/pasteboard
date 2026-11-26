@@ -956,7 +956,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
         if menuItem.action == #selector(markReadyToPost(_:)) {
             return !isCropping && !hasPointerInteraction
-                && store.board.cards.contains { selection.contains($0.id) && $0.asset != nil }
+                && (store.selectedPost(selection)?.isComplete == true
+                    || store.board.cards.contains { selection.contains($0.id) && $0.asset != nil })
         }
         if menuItem.action == #selector(previewSocialPost(_:))
             || menuItem.action == #selector(unmarkReadyToPost(_:))

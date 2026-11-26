@@ -76,20 +76,28 @@ extension BoardStore {
     }
     func selectedPost(_ ids: Set<UUID>) -> SocialPost? {
         guard !ids.isEmpty else { return nil }
-        return board.cards.compactMap { card -> SocialPost? in
+        let matches = board.cards.compactMap { card -> SocialPost? in
             guard let draft = card.socialPost, ids.isSubset(of: Set(draft.memberIDs)) else { return nil }
             return socialPost(boardID: board.id, anchorID: card.id)
+        }
+        return matches.sorted {
+            if $0.draft.isReady != $1.draft.isReady { return $0.draft.isReady }
+            return $0.draft.memberIDs.count < $1.draft.memberIDs.count
         }.first
     }
     @discardableResult func markReady(_ ids: Set<UUID>) throws -> SocialPost {
+        if var existing = selectedPost(ids), existing.isComplete {
+            existing.draft.isReady = true
+            guard updateSocialDraft(existing.draft, boardID: existing.boardID, anchorID: existing.anchorID)
+            else {
+                throw BoardExport.error(
+                    "This frame overlaps another ready post. Unmark that post before marking this frame.")
+            }
+            return existing
+        }
         let members = board.cards.filter { ids.contains($0.id) }
         guard !members.isEmpty, members.contains(where: { $0.asset != nil }) else {
             throw BoardExport.error("Select an image, or select images and notes together as a frame.")
-        }
-        if var existing = selectedPost(ids), Set(existing.draft.memberIDs) == ids {
-            existing.draft.isReady = true
-            updateSocialDraft(existing.draft, boardID: existing.boardID, anchorID: existing.anchorID)
-            return existing
         }
         guard
             !board.cards.contains(where: { card in
@@ -110,6 +118,15 @@ extension BoardStore {
             let page = workspace.boards.first(where: { $0.id == boardID }),
             let index = page.cards.firstIndex(where: { $0.id == anchorID })
         else { return false }
+        if draft.isReady {
+            let ids = Set(draft.memberIDs)
+            guard
+                !page.cards.contains(where: { card in
+                    card.id != anchorID
+                        && (card.socialPost.map { $0.isReady && !ids.isDisjoint(with: $0.memberIDs) } ?? false)
+                })
+            else { return false }
+        }
         var cards = page.cards
         cards[index].socialPost = draft
         replaceCards(cards, name: "Update Post Draft", boardID: boardID)

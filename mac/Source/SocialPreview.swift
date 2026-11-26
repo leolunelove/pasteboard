@@ -161,6 +161,7 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
     private var artwork: Data?
     private var preview: Data?
     private var exportButtons: [NSButton] = []
+    private var readyButton: NSButton?
     private var isSaving = false
     private var unavailable = false
     init(store: BoardStore, post: SocialPost) {
@@ -251,6 +252,7 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
                 let button = NSButton(title: title, target: self, action: action)
                 button.bezelStyle = .rounded
                 row.addArrangedSubview(button)
+                if action == #selector(toggleReady(_:)) { readyButton = button }
                 if exports { exportButtons.append(button) }
             }
             controls.addArrangedSubview(row)
@@ -263,7 +265,7 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
         row(
             [("Copy Image", #selector(copyImage(_:))), ("Save Image…", #selector(saveImage(_:)))],
             exports: true)
-        row([("Show on Board", #selector(showOnBoard(_:))), ("Unmark Ready", #selector(unmark(_:)))])
+        row([("Show on Board", #selector(showOnBoard(_:))), ("Unmark Ready", #selector(toggleReady(_:)))])
         label(
             "Drafts stay on this Mac. Previews are illustrative. Image exports keep your artwork and transparency, without the caption or social interface.",
             size: 11)
@@ -312,6 +314,7 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
         post.draft.format = SocialFormat.allCases[max(0, format.indexOfSelectedItem)]
         post.draft.fill = fit.indexOfSelectedItem == 1
         post.draft.caption = caption.string
+        readyButton?.title = post.draft.isReady ? "Unmark Ready" : "Mark Ready"
         format.isEnabled = post.draft.platform != .story
         status.stringValue =
             post.draft.caption.count > 10_000
@@ -388,7 +391,8 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
         isSaving = true
         defer { isSaving = false }
         guard store.updateSocialDraft(post.draft, boardID: post.boardID, anchorID: post.anchorID) else {
-            status.stringValue = "Draft could not be saved. Keep this window open and shorten the caption."
+            status.stringValue =
+                "Could not save: check for an overlapping ready frame or a caption longer than 10,000 characters."
             return false
         }
         savedDraft = post.draft
@@ -465,8 +469,8 @@ final class SocialPreviewWindow: NSWindowController, NSWindowDelegate, NSTextVie
         guard flush() else { return }
         onShowBoard?(post.boardID, Set(post.draft.memberIDs))
     }
-    @objc private func unmark(_ sender: Any?) {
-        post.draft.isReady = false
+    @objc private func toggleReady(_ sender: Any?) {
+        post.draft.isReady.toggle()
         if flush() { close() }
     }
 }
