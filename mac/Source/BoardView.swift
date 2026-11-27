@@ -10,6 +10,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     var onViewport: (() -> Void)?
     var onRequestPage: (() -> Void)?
     var onOpenSocialPost: ((UUID, UUID) -> Void)?
+    var onPlayVideo: ((Card) -> Void)?
     var onSelection: (() -> Void)?
     var onSidebarHover: ((CGPoint, Set<UUID>) -> UUID?)?
     var onSidebarDrop: ((UUID, Set<UUID>) -> Bool)?
@@ -95,7 +96,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         layer?.masksToBounds = true
         layer?.addSublayer(scene.root)
         store.imageReady = { [weak self] in self?.needsDisplay = true }
-        registerForDraggedTypes([.fileURL, .string, .html] + imageTypes)
+        registerForDraggedTypes(
+            [.fileURL, .init("public.url"), .string, .html] + VideoMedia.pasteboardTypes + imageTypes)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel(
@@ -350,8 +352,15 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 showSwatchEditor(card: card)
                 return
             }
-            if event.clickCount == 2, card.asset != nil, card.rect.contains(world(point)) {
+            if event.clickCount == 2, card.asset != nil, !card.isVideo, card.rect.contains(world(point)) {
                 beginCropping(card.id)
+                return
+            }
+            if card.isVideo && (event.clickCount == 2 || videoPlayRect(card).contains(point)) {
+                selection = [card.id]
+                onSelection?()
+                needsDisplay = true
+                onPlayVideo?(card)
                 return
             }
             if event.clickCount == 2, card.text != nil, card.rect.contains(world(point)) {
@@ -954,8 +963,12 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             return !isCropping && editor == nil && !hasPointerInteraction
                 && mode.canApply(to: store.board, selection: selection)
         }
+        if menuItem.action == #selector(playVideo(_:)) {
+            return !isCropping && !hasPointerInteraction && selectedVideo != nil
+        }
         if menuItem.action == #selector(markReadyToPost(_:)) {
             return !isCropping && !hasPointerInteraction
+                && !store.board.cards.contains { selection.contains($0.id) && $0.isVideo }
                 && (store.selectedPost(selection)?.isComplete == true
                     || store.board.cards.contains { selection.contains($0.id) && $0.asset != nil })
         }
@@ -1037,6 +1050,18 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         guard !cards.isEmpty else { return nil }
         let item = NSPasteboardItem()
         if let data = try? JSONEncoder().encode(cards) { item.setData(data, forType: internalType) }
+        if cards.count == 1, let video = cards[0].video {
+            if let file = video.file {
+                item.setString(
+                    store.directory.appendingPathComponent("Assets").appendingPathComponent(file)
+                        .absoluteString, forType: .fileURL)
+            }
+            if let url = YouTubeLink.watchURL(video) {
+                item.setString(url.absoluteString, forType: .string)
+                item.setString(url.absoluteString, forType: .init("public.url"))
+            }
+            return item
+        }
         if cards.count == 1, let asset = cards[0].asset {
             if BoardImageIO.isSVG(asset),
                 let bytes = try? Data(
@@ -1153,7 +1178,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     @discardableResult func pasteInternalCards(_ data: Data, at point: CGPoint) -> Bool {
         guard let cards = try? JSONDecoder().decode([Card].self, from: data), !cards.isEmpty,
             cards.allSatisfy(BoardStore.valid),
-            cards.allSatisfy({ $0.asset == nil || store.hasAsset($0.asset!) })
+            cards.allSatisfy({ $0.assetNames.allSatisfy(store.hasAsset) })
         else { return false }
         append(place(Card.copies(of: cards), near: point, avoidOverlap: true, preserveLayout: true))
         return true
@@ -1306,9 +1331,29 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             importFiles(urls, at: point, avoidOverlap: avoidOverlap)
             return true
         }
+        if let type = pb.availableType(from: VideoMedia.pasteboardTypes), let data = pb.data(forType: type),
+            !data.isEmpty
+        {
+            let ext = type.rawValue == "com.apple.quicktime-movie" ? "mov" : "mp4"
+            let temp = FileManager.default.temporaryDirectory.appendingPathComponent(
+                UUID().uuidString + "." + ext)
+            do {
+                try data.write(to: temp, options: .atomic)
+                importVideoFiles([temp], at: point, avoidOverlap: avoidOverlap, temporary: true)
+            } catch { showError(error) }
+            return true
+        }
         if receiveImageItems(
             pb.pasteboardItems ?? [], at: point, source: SourceLink.clipboard(pb), avoidOverlap: avoidOverlap)
         {
+            return true
+        }
+        if let video = YouTubeLink.parse(
+            pb.string(forType: .init("public.url")) ?? pb.string(forType: .string) ?? "")
+        {
+            do {
+                append(place([try store.youtubeCard(video)], near: point, avoidOverlap: avoidOverlap))
+            } catch { showError(error) }
             return true
         }
         if (pb.pasteboardItems ?? []).contains(where: DesignClipboard.nativeFigma) {
@@ -1343,11 +1388,14 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         var cards: [Card] = []
         var images: [Data] = []
         var sources: [String?] = []
+        var movies: [URL] = []
         var unsupported = 0
         for url in urls {
             do {
                 if url.pathExtension.lowercased() == "gatherboard" {
                     try store.importBoard(data: Data(contentsOf: url))
+                } else if VideoMedia.isMovie(url) {
+                    movies.append(url)
                 } else if ["txt", "md", "csv"].contains(url.pathExtension.lowercased()) {
                     var card = textCard(try String(contentsOf: url, encoding: .utf8))
                     card.sourceURL = url.absoluteString
@@ -1363,8 +1411,76 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             } catch { showError(error) }
         }
         append(place(cards, near: point, avoidOverlap: avoidOverlap))
+        importVideoFiles(movies, at: point, avoidOverlap: avoidOverlap)
         importImageData(images, at: point, avoidOverlap: avoidOverlap, sources: sources)
-        if unsupported > 0 { store.status?("Use images, SVG, .txt, .md, or .gatherboard files") }
+        if unsupported > 0 { store.status?("Use images, videos, SVG, .txt, .md, or .gatherboard files") }
+    }
+    var selectedVideo: Card? {
+        let selected = store.board.cards.filter { selection.contains($0.id) }
+        if let contextCardID, let card = selected.first(where: { $0.id == contextCardID && $0.isVideo }) {
+            return card
+        }
+        let videos = selected.filter(\.isVideo)
+        return videos.count == 1 ? videos[0] : nil
+    }
+    func videoPlayRect(_ card: Card) -> CGRect {
+        let rect = screen(card.rect)
+        let side = min(64, max(24, min(rect.width, rect.height) * 0.25))
+        return CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2, width: side, height: side)
+    }
+    @objc func playVideo(_ sender: Any?) { if let card = selectedVideo { onPlayVideo?(card) } }
+    private func importVideoFiles(
+        _ urls: [URL], at point: CGPoint, avoidOverlap: Bool, temporary: Bool = false
+    ) {
+        guard !urls.isEmpty else { return }
+        let boardID = store.board.id
+        let assets = store.directory.appendingPathComponent("Assets")
+        pasteInFlight += 1
+        pendingImageCount += urls.count
+        importIndicator.show(count: pendingImageCount)
+        store.status?("Adding video…")
+        VideoMedia.queue.async { [weak self] in
+            var prepared: [PreparedVideo] = []
+            var errors: [String] = []
+            for url in urls {
+                defer { if temporary { try? FileManager.default.removeItem(at: url) } }
+                do {
+                    var clip = try VideoMedia.prepare(url, assets: assets)
+                    if temporary { clip.video.title = "Pasted video" }
+                    prepared.append(clip)
+                } catch {
+                    errors.append(error.localizedDescription)
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let complete = { [weak self] in
+                    guard let self else { return }
+                    pasteInFlight -= 1
+                    pendingImageCount = max(0, pendingImageCount - urls.count)
+                    importIndicator.show(count: pendingImageCount)
+                    let cards = prepared.map { self.store.videoCard($0) }
+                    if store.board.id == boardID {
+                        append(place(cards, near: point, avoidOverlap: avoidOverlap))
+                    } else if let index = store.workspace.boards.firstIndex(where: { $0.id == boardID }) {
+                        var occupied = store.workspace.boards[index].cards
+                        for var card in cards {
+                            let origin = placement(for: card.rect.size, near: point, occupied: occupied)
+                            card.x = origin.x
+                            card.y = origin.y
+                            occupied.append(card)
+                        }
+                        store.replaceCards(occupied, name: "Add Videos", boardID: boardID)
+                    }
+                    if let error = errors.first { store.status?(error) }
+                }
+                if dragging || resizing != nil || resizingGroup != nil || panning {
+                    deferredImports.append(complete)
+                } else {
+                    complete()
+                }
+            }
+        }
     }
     func showError(_ error: Error) {
         let alert = NSAlert(error: error)
@@ -1397,7 +1513,13 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         onSelection?()
         let menu = NSMenu()
         if !selection.isEmpty {
-            if let post = store.selectedPost(selection) {
+            if selectedVideo != nil {
+                let play = menu.addItem(
+                    withTitle: "Play Video…", action: #selector(playVideo(_:)), keyEquivalent: "")
+                play.target = self
+            }
+            let hasVideo = store.board.cards.contains { selection.contains($0.id) && $0.isVideo }
+            if !hasVideo, let post = store.selectedPost(selection) {
                 let preview = menu.addItem(
                     withTitle: "Preview Social Post…", action: #selector(previewSocialPost(_:)),
                     keyEquivalent: "")
@@ -1408,7 +1530,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                         ? #selector(unmarkReadyToPost(_:)) : #selector(markReadyToPost(_:)), keyEquivalent: ""
                 )
                 status.target = self
-            } else if store.board.cards.contains(where: { selection.contains($0.id) && $0.asset != nil }) {
+            } else if !hasVideo
+                && store.board.cards.contains(where: { selection.contains($0.id) && $0.asset != nil })
+            {
                 let item = menu.addItem(
                     withTitle: "Mark Ready to Post…", action: #selector(markReadyToPost(_:)),
                     keyEquivalent: "")
@@ -1568,7 +1692,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
     var cropCandidate: Card? {
         let images = store.board.cards.filter {
-            selection.contains($0.id) && $0.asset != nil && !store.board.lockedIDs.contains($0.id)
+            selection.contains($0.id) && $0.asset != nil && !$0.isVideo
+                && !store.board.lockedIDs.contains($0.id)
         }
         if let contextCardID, let card = images.first(where: { $0.id == contextCardID }) { return card }
         return images.count == 1 ? images[0] : nil
@@ -1578,7 +1703,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         finishEditing()
         cancelCropping(nil)
         stopZoomAnimation()
-        guard let card = store.board.cards.first(where: { $0.id == id }), card.asset != nil else { return }
+        guard let card = store.board.cards.first(where: { $0.id == id }), card.asset != nil, !card.isVideo
+        else { return }
         guard !store.board.lockedIDs.contains(id) else {
             store.status?("Unlock this image to crop it")
             return

@@ -56,6 +56,7 @@ struct Card: Codable, Equatable {
     var hex: String?
     var isLocked: Bool { locked == true }
     var socialPost: SocialDraft?
+    var video: BoardVideo?
     var crop: ImageCrop?
     var imageCrop: ImageCrop { crop ?? .full }
     var fullImageRect: CGRect {
@@ -278,6 +279,9 @@ final class BoardStore {
             && (card.crop == nil
                 || (card.asset != nil && card.imageCrop.isValid && card.fullImageRect.width < 100_000
                     && card.fullImageRect.height < 100_000))
+            && (card.video == nil
+                || (card.video!.isValid && card.asset != nil && card.text == nil && card.hex == nil
+                    && card.crop == nil && card.socialPost == nil))
             && (card.socialPost == nil
                 || (card.socialPost!.isValid && card.socialPost!.memberIDs.contains(card.id)))
             && (card.hex == nil
@@ -657,9 +661,17 @@ final class BoardStore {
         exported.parentID = nil
         let pages = board.parentID == nil ? workspace.pages(in: board.id) : []
         var assets: [String: Data] = [:]
-        for name in Set(([exported] + pages).flatMap { $0.cards.compactMap(\.asset) }) {
-            assets[name] = try Data(
-                contentsOf: directory.appendingPathComponent("Assets").appendingPathComponent(name))
+        let hasVideos = ([exported] + pages).contains { $0.cards.contains(where: \.isVideo) }
+        var total: Int64 = 0
+        for name in Set(([exported] + pages).flatMap { $0.cards.flatMap(\.assetNames) }) {
+            let url = directory.appendingPathComponent("Assets").appendingPathComponent(name)
+            total += (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            guard !hasVideos || total <= 256 * 1024 * 1024 else {
+                throw BoardExport.error(
+                    "This board copy contains more than 256 MB of media. Export a smaller page instead. Your original videos and automatic local backups are preserved."
+                )
+            }
+            assets[name] = try Data(contentsOf: url)
         }
         return try JSONEncoder().encode(
             PortableBoard(board: exported, assets: assets, pages: pages.isEmpty ? nil : pages))
@@ -678,13 +690,23 @@ final class BoardStore {
         else { throw CocoaError(.fileReadCorruptFile) }
         let ids = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, UUID()) })
         var mapping: [String: String] = [:]
-        for name in Set(boards.flatMap { $0.cards.compactMap(\.asset) }) {
+        let movies = Set(boards.flatMap { $0.cards.compactMap { $0.video?.file } })
+        for name in Set(boards.flatMap { $0.cards.flatMap(\.assetNames) }) {
             guard let imageData = imported.assets[name] else { throw CocoaError(.fileReadCorruptFile) }
-            let decoded = try BoardImageIO.decode(imageData)
-            let newName = UUID().uuidString + "." + decoded.fileExtension
+            let ext: String
+            if movies.contains(name) {
+                ext = URL(fileURLWithPath: name).pathExtension.lowercased()
+            } else {
+                ext = try BoardImageIO.decode(imageData).fileExtension
+            }
+            let newName = UUID().uuidString + "." + ext
             try imageData.write(
                 to: directory.appendingPathComponent("Assets").appendingPathComponent(newName),
                 options: .atomic)
+            if movies.contains(name) {
+                _ = try VideoMedia.inspect(
+                    directory.appendingPathComponent("Assets").appendingPathComponent(newName))
+            }
             mapping[name] = newName
         }
         let copies = boards.map { original -> Board in
@@ -693,6 +715,7 @@ final class BoardStore {
             next.parentID = original.parentID.flatMap { ids[$0] }
             for i in next.cards.indices {
                 if let name = next.cards[i].asset { next.cards[i].asset = mapping[name] }
+                if let name = next.cards[i].video?.file { next.cards[i].video?.file = mapping[name] }
             }
             return next
         }

@@ -52,7 +52,7 @@ final class ImportIndicator: NSView {
             spinner.stopAnimation(nil)
             return
         }
-        label.stringValue = count == 1 ? "Adding image…" : "Adding \(count) images…"
+        label.stringValue = count == 1 ? "Adding media…" : "Adding \(count) items…"
         isHidden = false
         spinner.startAnimation(nil)
     }

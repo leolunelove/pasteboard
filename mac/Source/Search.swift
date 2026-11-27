@@ -128,18 +128,24 @@ enum BoardSearch {
             }
             for card in board.cards {
                 let recognized = card.asset.flatMap { imageText[$0] } ?? ""
-                let content = [card.hex ?? "", card.text ?? "", recognized, card.sourceURL ?? ""].joined(
+                let content = [
+                    card.hex ?? "", card.text ?? "", card.video?.title ?? "", recognized,
+                    card.sourceURL ?? "",
+                ].joined(
                     separator: " ")
                 if matches(path + " " + content) {
                     let excerpt =
-                        (card.hex ?? card.text
+                        (card.hex ?? card.text ?? card.video?.title
                         ?? (recognized.isEmpty ? card.sourceURL ?? "Image" : recognized))
                         .replacingOccurrences(of: "\n", with: " ")
                     results.append(
                         BoardSearchResult(
                             boardID: board.id, cardID: card.id, title: String(excerpt.prefix(130)),
                             detail: path + " · "
-                                + (card.hex != nil ? "Colour swatch" : card.asset == nil ? "Note" : "Image")
+                                + (card.isVideo
+                                    ? "Video"
+                                    : card.hex != nil
+                                        ? "Colour swatch" : card.asset == nil ? "Note" : "Image")
                                 + (card.isLocked ? " · Locked" : "")))
                 }
             }

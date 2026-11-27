@@ -72,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var groupButton: NSButton!
     private let overview = WorkspaceOverview()
     private var socialWindow: SocialPreviewWindow?
+    private var videoWindow: VideoPlayerWindow?
+    private var showsGlobalReady = false
+    private let readyButton = NSButton(title: "Ready to post", target: nil, action: nil)
     private var boardControls: [NSView] = []
     private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
@@ -88,9 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var searchWindow: SearchWindowController?
     private var backupsWindow: BackupsWindowController?
     private let showsPreviewOnLaunch: Bool
+    private let presentsWindow: Bool
 
     override convenience init() { self.init(directory: nil) }
-    init(directory: URL?) {
+    init(directory: URL?, presentsWindow: Bool = true) {
+        self.presentsWindow = presentsWindow
         let testDirectory = Bundle.main.object(forInfoDictionaryKey: "GatherTestingDirectory") as? String
         showsPreviewOnLaunch = directory == nil && testDirectory == nil
         store = BoardStore(directory: directory ?? testDirectory.map { URL(fileURLWithPath: $0) })
@@ -154,6 +159,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             overview.topAnchor.constraint(equalTo: canvas.topAnchor),
             overview.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
         ])
+        canvas.onPlayVideo = { [weak self] card in
+            guard let self else { return }
+            videoWindow?.close()
+            videoWindow = VideoPlayerWindow(store: store, boardID: store.board.id, card: card)
+            videoWindow?.present()
+        }
         canvas.onOpenSocialPost = { [weak self] board, anchor in
             self?.openSocialPost(boardID: board, anchorID: anchor)
         }
@@ -201,11 +212,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         backupTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.store.backupNow()
         }
-        window.center()
-        window.makeKeyAndOrderFront(nil)
+        if presentsWindow {
+            window.center()
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        } else {
+            window.setFrameOrigin(CGPoint(x: -4000, y: -4000))
+            window.orderBack(nil)
+        }
         revealActiveSidebarRow()
         window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
-        NSApp.activate(ignoringOtherApps: true)
         if let warning = store.loadWarning {
             let alert = NSAlert()
             alert.messageText = "Workspace recovery"
@@ -309,6 +325,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         mark.translatesAutoresizingMaskIntoConstraints = false
         mark.setAccessibilityLabel("Pasteboard")
         let subtitle = label("A visual worktable.", size: 11, color: .pasteboardMuted)
+        readyButton.target = self
+        readyButton.action = #selector(showAllReady(_:))
+        readyButton.bezelStyle = .rounded
+        readyButton.setButtonType(.pushOnPushOff)
+        readyButton.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
+        readyButton.imagePosition = .imageLeading
+        readyButton.font = .systemFont(ofSize: 13, weight: .medium)
+        readyButton.toolTip = "Ready images and frames from every workspace"
+        readyButton.translatesAutoresizingMaskIntoConstraints = false
         let section = label("Workspaces", size: 11, weight: .semibold, color: .pasteboardMuted)
         let plus = NSButton(
             image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Workspace")!,
@@ -360,7 +385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         updates.toolTip = "Check your version and find the latest Pasteboard build"
         updates.translatesAutoresizingMaskIntoConstraints = false
         for view in [
-            mark, brand, subtitle, section, plus, scroll, search, backups, updates, appearanceLabel,
+            mark, brand, subtitle, readyButton, section, plus, scroll, search, backups, updates,
+            appearanceLabel,
             appearancePicker,
         ] {
             sidebar.addSubview(view)
@@ -375,7 +401,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             brand.trailingAnchor.constraint(lessThanOrEqualTo: sidebar.trailingAnchor, constant: -15),
             subtitle.topAnchor.constraint(equalTo: mark.bottomAnchor, constant: 6),
             subtitle.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 25),
-            section.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 34),
+            readyButton.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 24),
+            readyButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 20),
+            readyButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -20),
+            readyButton.heightAnchor.constraint(equalToConstant: 34),
+            section.topAnchor.constraint(equalTo: readyButton.bottomAnchor, constant: 24),
             section.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
             plus.centerYAnchor.constraint(equalTo: section.centerYAnchor),
             plus.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -22),
@@ -427,11 +457,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         colour.toolTip = "Add a colour box with a visible HEX value (S)"
         let note = button("Note", symbol: "text.badge.plus", action: #selector(addNote(_:)))
         note.toolTip = "Add a text note (T)"
-        let image = button("Image", symbol: "photo", action: #selector(importImages(_:)))
-        image.toolTip = "Add images from your Mac (⌘O)"
+        let image = button("Media", symbol: "photo.on.rectangle", action: #selector(importImages(_:)))
+        image.toolTip = "Add images or videos from your Mac (⌘O)"
         let paste = button(
             "Paste", symbol: "doc.on.clipboard", action: #selector(pasteToBoard(_:)), primary: true)
-        paste.toolTip = "Paste images or text (⌘V)"
+        paste.toolTip = "Paste images, videos, YouTube links or text (⌘V)"
         for view in [titleLabel, countLabel, groupButton!, colour, note, image, paste] {
             view.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(view)
@@ -519,13 +549,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func refresh() {
-        let isOverview = store.showsWorkspaceOverview
-        titleLabel.stringValue = store.board.name
-        window?.title = "\(store.board.name) — Pasteboard"
+        let isOverview = showsGlobalReady || store.showsWorkspaceOverview
+        titleLabel.stringValue = showsGlobalReady ? "Ready to post" : store.board.name
+        window?.title = "\(titleLabel.stringValue) — Pasteboard"
+        readyButton.title = "Ready to post · \(store.allReadyPosts.count)"
+        readyButton.state = showsGlobalReady ? .on : .off
         let signature =
             store.workspace.boards.map { $0.id.uuidString + $0.name + ($0.parentID?.uuidString ?? "") }
             .joined(separator: "|") + store.board.id.uuidString
             + collapsedWorkspaces.map(\.uuidString).sorted().joined()
+            + (showsGlobalReady ? "global" : "board")
         if signature != sidebarSignature {
             sidebarSignature = signature
             sidebarTargets.removeAll()
@@ -550,12 +583,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         overview.isHidden = !isOverview
         canvas.isHidden = isOverview
         for control in boardControls { control.isHidden = isOverview }
-        if isOverview { overview.show(pages: store.workspace.pages(in: store.board.id), store: store) }
+        if isOverview {
+            overview.show(
+                pages: showsGlobalReady ? [] : store.workspace.pages(in: store.board.id), store: store,
+                globally: showsGlobalReady)
+        }
         canvas.refresh()
         updateCount()
         updateViewport()
         searchWindow?.reload()
         socialWindow?.refreshFromStore()
+        videoWindow?.refreshFromStore()
     }
     private func revealActiveSidebarRow() {
         window?.contentView?.layoutSubtreeIfNeeded()
@@ -568,7 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         row.translatesAutoresizingMaskIntoConstraints = false
         let button = BoardButton(title: board.name, target: self, action: #selector(selectBoard(_:)))
         button.identifier = .init(board.id.uuidString)
-        button.active = board.id == store.board.id
+        button.active = !showsGlobalReady && board.id == store.board.id
         button.isPage = board.parentID != nil
         button.isBordered = false
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -642,6 +680,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ])
         }
     }
+    @objc func showAllReady(_ sender: Any?) {
+        canvas.finishEditing()
+        canvas.cancelPointerInteraction()
+        canvas.cancelCropping(nil)
+        showsGlobalReady = true
+        canvas.selection.removeAll()
+        refresh()
+        window.makeFirstResponder(overview)
+    }
     func updateCount() {
         let count = store.board.cards.count
         let location =
@@ -655,9 +702,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if store.showsWorkspaceOverview {
             countLabel.stringValue = "Workspace  ·  \(pageCount) \(pageCount == 1 ? "page" : "pages")"
         }
+        if showsGlobalReady {
+            countLabel.stringValue = "All workspaces · \(store.allReadyPosts.count) ready posts"
+        }
         let ungroup = !canvas.canGroup && canvas.canUngroup
         groupButton?.title = ungroup ? "Ungroup" : "Group"
-        groupButton?.isEnabled = canvas.canGroup || canvas.canUngroup
+        groupButton?.isEnabled = !showsGlobalReady && (canvas.canGroup || canvas.canUngroup)
         groupButton?.setAccessibilityLabel(ungroup ? "Ungroup selected items" : "Group selected items")
     }
     private func hoverPage(at point: CGPoint, ids: Set<UUID>) -> UUID? {
@@ -740,6 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return nil
     }
     func navigate(to id: UUID) {
+        showsGlobalReady = false
         canvas.finishEditing()
         canvas.cancelCropping(nil)
         if let parent = store.workspace.boards.first(where: { $0.id == id })?.parentID {
@@ -755,6 +806,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         refresh()
     }
     private func ensureCanvasPage() {
+        if showsGlobalReady {
+            showsGlobalReady = false
+            refresh()
+        }
         guard store.showsWorkspaceOverview else { return }
         if let id = store.newPage(in: store.board.id, name: "Untitled page") { navigate(to: id) }
     }
@@ -786,7 +841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.prompt = "Add to Board"
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [
-            .image, .svg, .plainText, UTType(filenameExtension: "gatherboard") ?? .data,
+            .image, .movie, .video, .svg, .plainText, UTType(filenameExtension: "gatherboard") ?? .data,
         ]
         panel.beginSheetModal(for: window) { [weak self] result in
             guard let self, result == .OK else { return }
@@ -800,7 +855,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         canvas.finishEditing()
         canvas.cancelCropping(nil)
         askName(title: "New workspace", initial: "Untitled workspace", button: "Create Workspace") {
-            [weak self] name in self?.store.newBoard(name: name)
+            [weak self] name in
+            self?.showsGlobalReady = false
+            self?.store.newBoard(name: name)
         }
     }
     @objc func newPage(_ sender: Any?) {
@@ -845,9 +902,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         canvas.finishEditing()
         guard !canvas.hasPendingImports else {
             let alert = NSAlert()
-            alert.messageText = "Images are still importing"
+            alert.messageText = "Media is still importing"
             alert.informativeText =
-                "Let the import finish, then delete the workspace or page. This lets its backup include every image."
+                "Let the import finish, then delete the workspace or page. This lets its backup include every imported file."
             alert.beginSheetModal(for: window)
             return
         }
@@ -966,6 +1023,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         UserDefaults.standard.set(canvas.snappingEnabled, forKey: "SnapToObjects")
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if showsGlobalReady, menuItem.representedObject == nil, let action = menuItem.action,
+            [#selector(renameBoard(_:)), #selector(deleteBoard(_:)), #selector(newPage(_:))].contains(action)
+        {
+            return false
+        }
         if menuItem.action == #selector(changeAppearance(_:)) {
             menuItem.state =
                 (menuItem.representedObject as? String) == PasteboardAppearance.current.rawValue ? .on : .off
@@ -1009,6 +1071,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             canvas.selection = ids
             canvas.fitSelection(nil)
             canvas.needsDisplay = true
+            window.makeKeyAndOrderFront(nil)
         }
         socialWindow?.present()
     }
@@ -1029,7 +1092,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let alert = NSAlert()
         alert.messageText = "Make yourself some space."
         alert.informativeText =
-            "⌘N  New workspace\n⇧⌘N  New page in the current workspace\nClick + beside a workspace  Add a page\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add image or text files\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
+            "⌘N  New workspace\n⇧⌘N  New page in the current workspace\nClick + beside a workspace  Add a page\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add images, videos or text files\nPlay button / double-click video  Open the player\nPaste a YouTube link  Add a playable video card\nReady to post at top of sidebar  All marked images across workspaces\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
         alert.beginSheetModal(for: window)
     }
     @objc func runSelfCheck(_ sender: Any?) {
@@ -1087,7 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(file, "Rename Workspace or Page…", #selector(renameBoard(_:)), target: self)
         item(file, "Delete Workspace or Page…", #selector(deleteBoard(_:)), target: self)
         file.addItem(.separator())
-        item(file, "Add Images or Open Board…", #selector(importImages(_:)), "o", target: self)
+        item(file, "Add Images, Videos or Open Board…", #selector(importImages(_:)), "o", target: self)
         item(file, "Add Colour Swatch…", #selector(addColour(_:)), target: self)
         item(file, "Save Now", #selector(saveNow(_:)), "s", target: self)
         item(file, "Export PNG…", #selector(exportPNG(_:)), "e", [.command, .shift], target: self)
@@ -1107,6 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(edit, "Paste", #selector(NSText.paste(_:)), "v")
         item(edit, "Select All", #selector(NSText.selectAll(_:)), "a")
         item(edit, "Duplicate", #selector(BoardView.duplicate(_:)), "d", target: canvas)
+        item(edit, "Play Video…", #selector(BoardView.playVideo(_:)), target: canvas)
         item(edit, "Mark Ready to Post…", #selector(BoardView.markReadyToPost(_:)), target: canvas)
         item(edit, "Preview Social Post…", #selector(BoardView.previewSocialPost(_:)), target: canvas)
         item(edit, "Unmark Ready to Post", #selector(BoardView.unmarkReadyToPost(_:)), target: canvas)
@@ -1173,7 +1237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         canvas.finishEditing()
         if canvas.hasPendingImports {
-            statusLabel.stringValue = "Finishing image import…"
+            statusLabel.stringValue = "Finishing media import…"
             terminationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
                 [weak self] timer in
                 guard let self else {

@@ -9,6 +9,6 @@ for TASK_SOURCE in "$PROJECT_ROOT"/mac/Source/*.swift; do
   TASK_SOURCES+=("$TASK_SOURCE")
 done
 xcrun swiftc -swift-version 5 -module-cache-path "${TMPDIR:-/tmp}/pasteboard-test-module-cache" \
-  -framework AppKit -framework UniformTypeIdentifiers \
+  -framework AppKit -framework AVKit -framework AVFoundation -framework WebKit -framework UniformTypeIdentifiers \
   "${TASK_SOURCES[@]}" "$PROJECT_ROOT/tests/core/main.swift" -o "$TEST_DIRECTORY/check"
 "$TEST_DIRECTORY/check"

@@ -52,7 +52,8 @@ struct SocialPost: Equatable {
     var draft: SocialDraft
     let cards: [Card]
     var isComplete: Bool {
-        Set(cards.map(\.id)) == Set(draft.memberIDs) && cards.contains { $0.asset != nil }
+        Set(cards.map(\.id)) == Set(draft.memberIDs) && !cards.contains(where: \.isVideo)
+            && cards.contains { $0.asset != nil }
     }
     var title: String { cards.count == 1 ? "Image" : "Frame · \(draft.memberIDs.count) items" }
 }
@@ -66,11 +67,20 @@ extension BoardStore {
             boardID: boardID, anchorID: anchorID, pageName: page.name, draft: draft,
             cards: page.cards.filter { ids.contains($0.id) })
     }
-    func readyPosts(in rootID: UUID) -> [SocialPost] {
-        workspace.boards.filter { $0.id == rootID || $0.parentID == rootID }.flatMap { page in
-            page.cards.compactMap { card in
-                guard card.socialPost?.isReady == true else { return nil }
-                return socialPost(boardID: page.id, anchorID: card.id)
+    var allReadyPosts: [SocialPost] { readyPosts(in: nil) }
+    func readyPosts(in rootID: UUID?) -> [SocialPost] {
+        workspace.boards.filter { rootID == nil || $0.id == rootID || $0.parentID == rootID }.flatMap {
+            page -> [SocialPost] in
+            let anchors = page.cards.filter { $0.socialPost?.isReady == true }
+            guard !anchors.isEmpty else { return [] }
+            var lookup: [UUID: (Card, Int)] = [:]
+            for (index, card) in page.cards.enumerated() { lookup[card.id] = (card, index) }
+            return anchors.compactMap { anchor -> SocialPost? in
+                let draft = anchor.socialPost!
+                let members = draft.memberIDs.compactMap { lookup[$0] }.sorted { $0.1 < $1.1 }.map { $0.0 }
+                guard !members.contains(where: \.isVideo) else { return nil }
+                return SocialPost(
+                    boardID: page.id, anchorID: anchor.id, pageName: page.name, draft: draft, cards: members)
             }
         }
     }
@@ -86,6 +96,10 @@ extension BoardStore {
         }.first
     }
     @discardableResult func markReady(_ ids: Set<UUID>) throws -> SocialPost {
+        guard !board.cards.contains(where: { ids.contains($0.id) && $0.isVideo }) else {
+            throw BoardExport.error(
+                "Videos and YouTube cards cannot be marked ready to post. Select images and notes only.")
+        }
         if var existing = selectedPost(ids), existing.isComplete {
             existing.draft.isReady = true
             guard updateSocialDraft(existing.draft, boardID: existing.boardID, anchorID: existing.anchorID)
@@ -120,6 +134,7 @@ extension BoardStore {
         else { return false }
         if draft.isReady {
             let ids = Set(draft.memberIDs)
+            guard !page.cards.contains(where: { ids.contains($0.id) && $0.isVideo }) else { return false }
             guard
                 !page.cards.contains(where: { card in
                     card.id != anchorID

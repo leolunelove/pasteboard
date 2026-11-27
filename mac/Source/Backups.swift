@@ -68,7 +68,7 @@ final class LocalBackups {
         do {
             try FileManager.default.createDirectory(
                 at: staging.appendingPathComponent("Assets"), withIntermediateDirectories: true)
-            for asset in Set(workspace.boards.flatMap { $0.cards.compactMap(\.asset) }) {
+            for asset in Set(workspace.boards.flatMap { $0.cards.flatMap(\.assetNames) }) {
                 guard asset == URL(fileURLWithPath: asset).lastPathComponent else {
                     throw CocoaError(.fileReadCorruptFile)
                 }
@@ -130,7 +130,7 @@ final class LocalBackups {
         else { throw CocoaError(.fileReadCorruptFile) }
         try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
         var names: [String: String] = [:]
-        for name in Set(workspace.boards.flatMap { $0.cards.compactMap(\.asset) }) {
+        for name in Set(workspace.boards.flatMap { $0.cards.flatMap(\.assetNames) }) {
             let new = UUID().uuidString + "." + URL(fileURLWithPath: name).pathExtension
             try FileManager.default.copyItem(
                 at: source.appendingPathComponent("Assets").appendingPathComponent(name),
@@ -152,6 +152,7 @@ final class LocalBackups {
                     board.cards[i].socialPost = draft
                 }
                 if let asset = board.cards[i].asset { board.cards[i].asset = names[asset] }
+                if let file = board.cards[i].video?.file { board.cards[i].video?.file = names[file] }
                 if let group = board.cards[i].groupID {
                     if groups[group] == nil { groups[group] = UUID() }
                     board.cards[i].groupID = groups[group]

@@ -71,15 +71,20 @@ final class PagePreviewButton: NSButton {
             let image = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)!
             image.draw(in: CGRect(x: preview.midX - 15, y: preview.midY - 18, width: 30, height: 36))
         }
+        let truncation = NSMutableParagraphStyle()
+        truncation.lineBreakMode = .byTruncatingTail
         (page.name as NSString).draw(
             in: CGRect(x: 18, y: bounds.height - 56, width: bounds.width - 36, height: 23),
             withAttributes: [
                 .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-                .foregroundColor: NSColor.pasteboardInk,
+                .foregroundColor: NSColor.pasteboardInk, .paragraphStyle: truncation,
             ])
         ((subtitle ?? "\(page.cards.count) \(page.cards.count == 1 ? "item" : "items")") as NSString).draw(
-            at: CGPoint(x: 18, y: bounds.height - 30),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.pasteboardMuted])
+            in: CGRect(x: 18, y: bounds.height - 30, width: bounds.width - 36, height: 18),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.pasteboardMuted,
+                .paragraphStyle: truncation,
+            ])
         if window?.firstResponder === self {
             NSColor.pasteboardAccent.setStroke()
             let focus = NSBezierPath(roundedRect: bounds.insetBy(dx: 3, dy: 3), xRadius: 10, yRadius: 10)
@@ -109,6 +114,7 @@ final class WorkspaceOverview: NSView {
     private var tiles: [PagePreviewButton] = []
     private var pageSnapshot: [Board] = []
     private var rootID: UUID?
+    private var global = false
     var openPage: ((UUID) -> Void)?
     var newPage: (() -> Void)?
     var renamePage: ((UUID) -> Void)?
@@ -146,9 +152,23 @@ final class WorkspaceOverview: NSView {
         setAccessibilityLabel("Workspace page overview")
     }
     required init?(coder: NSCoder) { fatalError() }
-    func show(pages: [Board], store: BoardStore) {
-        let posts = store.readyPosts(in: store.board.id)
-        guard rootID != store.board.id || pageSnapshot != pages || readySnapshot != posts else { return }
+    func show(pages: [Board], store: BoardStore, globally: Bool = false) {
+        let posts = globally ? store.allReadyPosts : store.readyPosts(in: store.board.id)
+        guard
+            global != globally || rootID != store.board.id || pageSnapshot != pages || readySnapshot != posts
+        else { return }
+        global = globally
+        readyDetail.stringValue =
+            globally
+            ? "Every ready image and frame, across all your workspaces."
+            : "Images and frames you’ve marked across this workspace."
+        readyEmpty.stringValue =
+            globally
+            ? "Nothing marked yet. Select an image or frame in any workspace, then right-click → Mark Ready to Post."
+            : "Select an image or frame on a page, then right-click → Mark Ready to Post."
+        heading.isHidden = globally
+        detail.isHidden = globally
+        create.isHidden = globally
         readySnapshot = posts
         for tile in readyTiles { tile.removeFromSuperview() }
         readyTiles = []
@@ -159,9 +179,15 @@ final class WorkspaceOverview: NSView {
             tile.tag = index
             tile.subtitle =
                 post.isComplete
-                ? post.pageName + " · " + post.draft.platform.title : "Missing frame items · Review"
+                ? (globally
+                    ? (store.workspace.boards.first { $0.id == post.boardID }.map {
+                        store.workspace.path(for: $0)
+                    } ?? post.pageName) : post.pageName) + " · " + post.draft.platform.title
+                : "Frame needs review"
             tile.setAccessibilityLabel("Preview ready post, \(post.pageName), \(post.title)")
-            tile.toolTip = "Preview post and edit caption"
+            tile.toolTip =
+                (store.workspace.boards.first { $0.id == post.boardID }.map { store.workspace.path(for: $0) }
+                    ?? post.pageName) + " · Preview post and edit caption"
             readyTiles.append(tile)
             document.addSubview(tile)
         }
@@ -185,7 +211,7 @@ final class WorkspaceOverview: NSView {
             tiles.append(tile)
             document.addSubview(tile)
         }
-        empty.isHidden = !pages.isEmpty
+        empty.isHidden = globally || !pages.isEmpty
         needsLayout = true
     }
     func refreshImages() { for tile in tiles + readyTiles { tile.needsDisplay = true } }
@@ -216,7 +242,10 @@ final class WorkspaceOverview: NSView {
                 y: pageTop + 92 + CGFloat(index / columns) * 240, width: tileWidth, height: 220)
         }
         let rows = (tiles.count + columns - 1) / columns
-        let height = max(bounds.height, pageTop + 160 + CGFloat(rows) * 240)
+        let height =
+            global
+            ? max(bounds.height, 140 + CGFloat(max(1, readyRows)) * 240)
+            : max(bounds.height, pageTop + 160 + CGFloat(rows) * 240)
         document.frame = CGRect(x: 0, y: 0, width: width, height: height)
         empty.frame = CGRect(x: margin, y: pageTop + 120, width: width - margin * 2, height: 100)
     }

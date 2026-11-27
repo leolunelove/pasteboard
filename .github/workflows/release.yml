@@ -56,7 +56,7 @@ jobs:
           import os, subprocess
           from pathlib import Path
           version = os.environ['EXPECTED_VERSION']
-          notes = '# Ready to post\n\n' + '\n'.join('- ' + line for line in Path('mac/ReleaseNotes.txt').read_text().splitlines() if line.strip()) + '\n'
+          notes = '# What’s new\n\n' + '\n'.join('- ' + line for line in Path('mac/ReleaseNotes.txt').read_text().splitlines() if line.strip()) + '\n'
           Path('/tmp/pasteboard-release-notes.md').write_text(notes)
           subprocess.run(['gh', 'release', 'create', 'v' + version, '--draft', '--target', os.environ['GITHUB_SHA'], '--title', 'Pasteboard ' + version, '--notes-file', '/tmp/pasteboard-release-notes.md'], check=True)
           subprocess.run(['gh', 'release', 'upload', 'v' + version, 'release/Pasteboard-Mac.zip', 'release/Pasteboard-Update.json'], check=True)

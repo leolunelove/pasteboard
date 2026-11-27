@@ -1,11 +1,9 @@
-Re-marking a frame keeps its saved caption and all its original members, even from a single selected item.
-Inactive drafts cannot claim artwork that belongs to another ready post.
-Mark images and selections of images and notes as Ready to Post.
-Every workspace now shows its ready posts above its pages.
-Preview Instagram Feed and Story, LinkedIn and X with a saved draft caption.
-Copy or save the complete preview, or export only the artwork with transparency.
-Copy captions separately as editable text; save drafts locally and reopen them later.
-Choose original, square, portrait or landscape preview proportions, with fit or centre crop.
-Ready badges identify marked artwork. Missing frame items block incomplete exports.
-Readiness and captions support Undo, portable boards and local backups. Duplicates start unmarked.
-Pasteboard is still an early preview. Keep a backup of important boards.
+Ready to post now sits above Workspaces and collects marked images and frames from every workspace.
+The global collection shows each post’s workspace/page and opens its saved social preview and caption.
+Paste, drop or add local videos with Media or Command O. Press Play or double-click a video card to open its player.
+Video playback includes pause, seeking, volume and fullscreen; closing the player stops playback.
+Paste YouTube watch, Shorts, live or youtu.be links to add playable video cards, including start times.
+YouTube loads only when you press Play. Open on YouTube is available for videos that restrict embedding.
+Videos are stored locally and included in backups and portable board copies. Page moves and duplicate cards keep their clips.
+Videos and selections containing videos cannot be marked Ready to Post.
+Pasteboard remains an early preview. Keep a backup of important boards.
