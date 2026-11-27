@@ -13,9 +13,11 @@ func waitFor(_ condition: () -> Bool, timeout: Double = 10, file: String = #file
     while !condition() && Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
     try check(condition(), file: file, line: line)
 }
-let directory = URL(fileURLWithPath: "/private/tmp/PasteboardChecks-" + UUID().uuidString)
-defer { try? FileManager.default.removeItem(at: directory) }
-do {
+func selfTest() throws {
+    let directory = URL(fileURLWithPath: "/private/tmp/PasteboardChecks-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    _ = NSApplication.shared
+    try sidebarSelectionTest(directory: directory.appendingPathComponent("sidebar-selection"))
     try nestedSectionsTest(directory: directory.appendingPathComponent("sections"))
     try sectionCanvasTest(directory: directory.appendingPathComponent("section-canvas"))
     try overviewSelectionTest(directory: directory.appendingPathComponent("overview-selection"))
@@ -35,6 +37,9 @@ do {
     try minimapTest(directory: directory.appendingPathComponent("minimap"))
     try svgTest(directory: directory.appendingPathComponent("svg"))
     try swatchTest(directory: directory.appendingPathComponent("swatches"))
+}
+do {
+    try selfTest()
 } catch {
     fputs("FAIL: \(error.localizedDescription)\n", stderr)
     exit(1)

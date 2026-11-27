@@ -22,6 +22,7 @@ func selfTest() throws {
     defer { try? FileManager.default.removeItem(at: interactionDirectory) }
     try nestedSectionsTest(directory: interactionDirectory.appendingPathComponent("sections"))
     try sectionCanvasTest(directory: interactionDirectory.appendingPathComponent("section-canvas"))
+    try sidebarSelectionTest(directory: interactionDirectory.appendingPathComponent("sidebar-selection"))
     try overviewSelectionTest(directory: interactionDirectory.appendingPathComponent("overview-selection"))
     try videoAndGlobalReadyTest(directory: interactionDirectory.appendingPathComponent("videos"))
     try socialPostTest(directory: interactionDirectory.appendingPathComponent("social"))

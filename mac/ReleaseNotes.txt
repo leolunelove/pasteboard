@@ -1,5 +1,5 @@
-Organise designs inside nested folders, with visual overviews at every level. Turn an existing board into a folder while keeping its items together in an inner board.
-Select sibling boards in an overview and merge them into one canvas with named design sections. A local backup is saved first; undo restores the originals.
-Click a section title to smoothly zoom in, use the Sections menu to jump between designs, and Overview to fit the whole canvas. Section boundaries also appear in the minimap.
-A refined sidebar adds clearer hierarchy, folder and section icons, item counts, quieter controls, and a Back to Parent Folder shortcut.
-Nested folders and sections are preserved in local backups and portable board copies. Ready posts and search work across the full hierarchy.
+Select boards for merging directly in the left sidebar: Command-click, Shift-click a range, use the checklist beside Workspaces, or right-click Select for Merge.
+Sidebar and overview selections stay in sync. A compact merge panel shows the selection count; Escape cancels, and Return merges.
+A calmer sidebar gives board names more room, clearer selection checkmarks, quieter counts, and reliable keyboard focus.
+Refined folder overviews use compact folder cards, lighter board previews, clearer typography, and consistent controls. Canvas tools stay on the canvas.
+Merges still create named sections, save a local backup first, and support undo.

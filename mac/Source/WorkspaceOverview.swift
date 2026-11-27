@@ -78,15 +78,20 @@ final class PagePreviewButton: NSButton {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        (selectedForMerge ? NSColor.pasteboardSelection : NSColor.pasteboardSurface).setFill()
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 13, yRadius: 13)
+        NSColor.pasteboardSurface.setFill()
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 12, yRadius: 12)
         shape.fill()
         (selectedForMerge
             ? NSColor.pasteboardAccent
-            : hovering ? NSColor.pasteboardAccent.withAlphaComponent(0.45) : .pasteboardBorder).setStroke()
+            : hovering ? NSColor.pasteboardAccent.withAlphaComponent(0.4) : NSColor.pasteboardBorder.withAlphaComponent(0.75)).setStroke()
         shape.lineWidth = selectedForMerge ? 2 : 1
         shape.stroke()
-        let preview = CGRect(x: 12, y: 12, width: bounds.width - 24, height: bounds.height - 80)
+        if isFolder, bounds.height < 150 {
+            drawCompactFolder()
+            drawKeyboardFocus()
+            return
+        }
+        let preview = CGRect(x: 9, y: 9, width: bounds.width - 18, height: bounds.height - 77)
         NSColor.pasteboardCanvas.setFill()
         NSBezierPath(roundedRect: preview, xRadius: 8, yRadius: 8).fill()
         if isFolder {
@@ -149,13 +154,13 @@ final class PagePreviewButton: NSButton {
         let truncation = NSMutableParagraphStyle()
         truncation.lineBreakMode = .byTruncatingTail
         (page.name as NSString).draw(
-            in: CGRect(x: 16, y: bounds.height - 54, width: bounds.width - 32, height: 23),
+            in: CGRect(x: 15, y: bounds.height - 51, width: bounds.width - 32, height: 23),
             withAttributes: [
-                .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
                 .foregroundColor: NSColor.pasteboardInk, .paragraphStyle: truncation,
             ])
         ((subtitle ?? "\(page.cards.count) \(page.cards.count == 1 ? "item" : "items")") as NSString).draw(
-            in: CGRect(x: 16, y: bounds.height - 29, width: bounds.width - 32, height: 18),
+            in: CGRect(x: 15, y: bounds.height - 28, width: bounds.width - 32, height: 18),
             withAttributes: [
                 .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.pasteboardMuted,
                 .paragraphStyle: truncation,
@@ -177,12 +182,44 @@ final class PagePreviewButton: NSButton {
                 path.stroke()
             }
         }
+        drawKeyboardFocus()
+    }
+    private func drawKeyboardFocus() {
         if window?.firstResponder === self {
             NSColor.pasteboardAccent.setStroke()
             let focus = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 4), xRadius: 10, yRadius: 10)
             focus.lineWidth = 2
             focus.stroke()
         }
+    }
+    private func drawCompactFolder() {
+        let iconRect = CGRect(x: 16, y: bounds.midY - 22, width: 44, height: 44)
+        NSColor.pasteboardAccent.withAlphaComponent(0.08).setFill()
+        NSBezierPath(roundedRect: iconRect, xRadius: 10, yRadius: 10).fill()
+        let config = NSImage.SymbolConfiguration(pointSize: 21, weight: .regular)
+            .applying(.init(paletteColors: [NSColor.pasteboardAccent.withAlphaComponent(0.8)]))
+        NSImage(systemSymbolName: "folder", accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)?.draw(in: iconRect.insetBy(dx: 10, dy: 10))
+        let truncation = NSMutableParagraphStyle()
+        truncation.lineBreakMode = .byTruncatingTail
+        (page.name as NSString).draw(
+            in: CGRect(x: 74, y: bounds.midY - 19, width: bounds.width - 105, height: 21),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.pasteboardInk, .paragraphStyle: truncation,
+            ])
+        let count = childCount == 0 ? "Empty folder" : "\(childCount) \(childCount == 1 ? "board or folder" : "boards & folders")"
+        (count as NSString).draw(
+            in: CGRect(x: 74, y: bounds.midY + 4, width: bounds.width - 105, height: 18),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.pasteboardMuted,
+                .paragraphStyle: truncation,
+            ])
+        let arrow = NSImage.SymbolConfiguration(pointSize: 10, weight: .medium)
+            .applying(.init(paletteColors: [NSColor.pasteboardMuted.withAlphaComponent(0.6)]))
+        NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(arrow)?.draw(
+                in: CGRect(x: bounds.width - 24, y: bounds.midY - 5, width: 8, height: 10))
     }
 }
 
@@ -193,10 +230,10 @@ final class WorkspaceOverview: NSView {
     private let heading = NSTextField(labelWithString: "Boards & folders")
     private let detail = NSTextField(
         labelWithString: "A place for each idea. Bring boards together when you’re ready.")
-    private let create = NSButton(title: "New Board", target: nil, action: nil)
-    private let createFolder = NSButton(title: "New Folder", target: nil, action: nil)
-    private let select = NSButton(title: "Select boards", target: nil, action: nil)
-    private let merge = NSButton(title: "Merge Boards", target: nil, action: nil)
+    private let create = PasteboardToolbarButton(title: "New Board", target: nil, action: nil)
+    private let createFolder = PasteboardToolbarButton(title: "New Folder", target: nil, action: nil)
+    private let select = PasteboardToolbarButton(title: "Select boards", target: nil, action: nil)
+    private let merge = PasteboardToolbarButton(title: "Merge Boards", target: nil, action: nil)
     private let back = NSButton(title: "Back", target: nil, action: nil)
     private let selectionHint = NSTextField(
         labelWithString: "Select two or more boards to merge into sections.")
@@ -221,11 +258,12 @@ final class WorkspaceOverview: NSView {
     private var global = false
     private(set) var selecting = false
     private(set) var selectedPageIDs = Set<UUID>()
-    private var selectionAnchor: UUID?
+    private(set) var selectionAnchor: UUID?
     var openPage: ((UUID) -> Void)?
     var newPage: (() -> Void)?
     var newFolder: (() -> Void)?
     var mergePages: ((Set<UUID>) -> Void)?
+    var selectionChanged: ((Set<UUID>, Bool) -> Void)?
     var goBack: (() -> Void)?
     var renamePage: ((UUID) -> Void)?
     var deletePage: ((UUID) -> Void)?
@@ -240,9 +278,9 @@ final class WorkspaceOverview: NSView {
         scroll.autohidesScrollers = true
         scroll.documentView = document
         addSubview(scroll)
-        heading.font = .systemFont(ofSize: 25, weight: .semibold)
+        heading.font = .systemFont(ofSize: 21, weight: .semibold)
         heading.textColor = .pasteboardInk
-        detail.font = .systemFont(ofSize: 13)
+        detail.font = .systemFont(ofSize: 12)
         detail.textColor = .pasteboardMuted
         detail.lineBreakMode = .byTruncatingTail
         selectionHint.font = .systemFont(ofSize: 12)
@@ -258,6 +296,10 @@ final class WorkspaceOverview: NSView {
             button.bezelStyle = .rounded
             button.font = .systemFont(ofSize: 12, weight: .medium)
         }
+        create.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        createFolder.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
+        select.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
+        merge.primary = true
         create.setAccessibilityLabel("Create a board in this folder")
         createFolder.setAccessibilityLabel("Create a folder")
         merge.toolTip = "Combine selected boards into one board, with a named section for each design"
@@ -268,9 +310,9 @@ final class WorkspaceOverview: NSView {
         empty.font = .systemFont(ofSize: 17)
         empty.textColor = .pasteboardMuted
         empty.alignment = .center
-        readyHeading.font = .systemFont(ofSize: 25, weight: .semibold)
+        readyHeading.font = .systemFont(ofSize: 21, weight: .semibold)
         readyHeading.textColor = .pasteboardInk
-        readyDetail.font = .systemFont(ofSize: 13)
+        readyDetail.font = .systemFont(ofSize: 12)
         readyDetail.textColor = .pasteboardMuted
         readyDetail.lineBreakMode = .byTruncatingTail
         readyEmpty.font = .systemFont(ofSize: 13)
@@ -346,6 +388,11 @@ final class WorkspaceOverview: NSView {
         readyEmpty.isHidden = !posts.isEmpty
         rootID = store.board.id
         pageSnapshot = pages
+        let folderCount = pages.filter { $0.isFolder == true || (counts[$0.id] ?? 0) > 0 }.count
+        let boardCount = pages.count - folderCount
+        detail.stringValue = pages.isEmpty
+            ? "Create a board or folder to make a start."
+            : "\(boardCount) \(boardCount == 1 ? "board" : "boards") · \(folderCount) \(folderCount == 1 ? "folder" : "folders")"
         for tile in tiles { tile.removeFromSuperview() }
         tiles = []
         for page in pages {
@@ -389,14 +436,16 @@ final class WorkspaceOverview: NSView {
     private func updateSelection() {
         select.isHidden = global || eligiblePageIDs.isEmpty
         select.title = selecting ? "Done" : "Select boards"
+        select.image = selecting ? nil : NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
         merge.isHidden = global || !selecting
         merge.title = selectedPageIDs.isEmpty ? "Merge Boards" : "Merge \(selectedPageIDs.count) Boards"
         merge.isEnabled = selectedPageIDs.count >= 2
+        merge.primary = merge.isEnabled
         selectionHint.isHidden = global || !selecting
         selectionHint.stringValue =
             selectedPageIDs.isEmpty
             ? "Select two or more boards. Each becomes a named section."
-            : "\(selectedPageIDs.count) selected · ⌘-click to toggle, Shift-click for a range."
+            : "\(selectedPageIDs.count) selected · Each board becomes a named section."
         detail.isHidden = global || selecting
         for tile in tiles {
             tile.selectedForMerge = selectedPageIDs.contains(tile.page.id)
@@ -409,6 +458,17 @@ final class WorkspaceOverview: NSView {
             tile.setAccessibilityValue(selectedPageIDs.contains(tile.page.id) ? "Selected" : "")
         }
         needsLayout = true
+    }
+    // External navigation and the sidebar share this selection without recursive notifications.
+    func setMergeSelection(_ ids: Set<UUID>, selecting: Bool, anchor: UUID? = nil) {
+        self.selecting = selecting && !global
+        selectedPageIDs = self.selecting ? ids.intersection(eligiblePageIDs) : []
+        if let anchor, selectedPageIDs.contains(anchor) { selectionAnchor = anchor }
+        if let anchor = selectionAnchor, !selectedPageIDs.contains(anchor) { selectionAnchor = nil }
+        if self.selecting && selectionAnchor == nil {
+            selectionAnchor = tiles.first { selectedPageIDs.contains($0.page.id) }?.page.id
+        }
+        updateSelection()
     }
     // Shared by pointer and keyboard actions so range selection has one anchor.
     func activatePage(_ id: UUID, modifiers: NSEvent.ModifierFlags = []) {
@@ -424,13 +484,16 @@ final class WorkspaceOverview: NSView {
             let start = tiles.firstIndex(where: { $0.page.id == anchor }),
             let end = tiles.firstIndex(where: { $0.page.id == id })
         {
-            selectedPageIDs.formUnion(
+            let range = Set(
                 tiles[min(start, end)...max(start, end)].filter { !$0.isFolder }.map { $0.page.id })
+            if modifiers.contains(.command) { selectedPageIDs.formUnion(range) }
+            else { selectedPageIDs = range }
         } else {
             if !selectedPageIDs.insert(id).inserted { selectedPageIDs.remove(id) }
             selectionAnchor = id
         }
         updateSelection()
+        selectionChanged?(selectedPageIDs, selecting)
     }
     func refreshImages() { for tile in tiles + readyTiles { tile.needsDisplay = true } }
     override func layout() {
@@ -438,51 +501,65 @@ final class WorkspaceOverview: NSView {
         scroll.frame = bounds
         let width = max(1, scroll.contentSize.width)
         let gap: CGFloat = 18
-        let margin: CGFloat = width < 600 ? 22 : 28
+        let margin: CGFloat = width < 700 ? 24 : 32
         let columns = max(1, Int((width - margin * 2 + gap) / 258))
         let tileWidth = max(160, (width - margin * 2 - CGFloat(columns - 1) * gap) / CGFloat(columns))
-        let top: CGFloat = !back.isHidden ? 62 : 28
-        back.frame = CGRect(x: margin - 5, y: 18, width: 70, height: 28)
+        let tileHeight: CGFloat = 218
+        let rowHeight = tileHeight + gap
+        let top: CGFloat = !back.isHidden ? 54 : 28
+        back.frame = CGRect(x: margin - 5, y: 14, width: 70, height: 26)
         let folderFirst = !global && parentID != nil
         let readyRows = (readyTiles.count + columns - 1) / columns
-        let readyHeight: CGFloat =
-            readyTiles.isEmpty
-            ? (global ? 164 : 112) : 104 + CGFloat(readyRows) * 238
-        // Design boards are the primary content of an inner folder. Keep their
-        // selection controls in view even when the folder has many ready posts.
+        let readyHeight: CGFloat = readyTiles.isEmpty
+            ? (global ? 164 : 108) : 86 + CGFloat(readyRows) * rowHeight
+        // Keep an inner folder's boards and selection controls above its ready posts.
         let pageTop = folderFirst ? top : top + readyHeight
-        heading.frame = CGRect(x: margin, y: pageTop, width: width - margin * 2, height: 35)
-        detail.frame = CGRect(x: margin, y: pageTop + 42, width: width - margin * 2, height: 22)
+        heading.frame = CGRect(x: margin, y: pageTop, width: width - margin * 2, height: 29)
+        detail.frame = CGRect(x: margin, y: pageTop + 33, width: width - margin * 2, height: 20)
         selectionHint.frame = detail.frame
-        let toolbarY = pageTop + 78
-        create.frame = CGRect(x: margin - 5, y: toolbarY, width: 106, height: 32)
-        createFolder.frame = CGRect(x: margin + 106, y: toolbarY, width: 106, height: 32)
-        select.frame = CGRect(x: width - margin - 111, y: toolbarY, width: 116, height: 32)
+        let toolbarY = pageTop + 68
+        create.frame = CGRect(x: margin, y: toolbarY, width: 110, height: 32)
+        createFolder.frame = CGRect(x: margin + 118, y: toolbarY, width: 116, height: 32)
+        let selectWidth: CGFloat = selecting ? 64 : 120
+        select.frame = CGRect(x: width - margin - selectWidth, y: toolbarY, width: selectWidth, height: 32)
         let compactSelection = selecting && width < 760
         merge.frame = CGRect(
-            x: compactSelection ? margin - 5 : width - margin - 260,
-            y: toolbarY + (compactSelection ? 40 : 0), width: 145, height: 32)
-        let tileTop = toolbarY + (compactSelection ? 88 : 48)
-        for (index, tile) in tiles.enumerated() {
+            x: compactSelection ? margin : width - margin - selectWidth - 10 - 145,
+            y: toolbarY + (compactSelection ? 42 : 0), width: 145, height: 32)
+        let tileTop = toolbarY + (compactSelection ? 90 : 48)
+        let boards = tiles.filter { !$0.isFolder }
+        let folders = tiles.filter { $0.isFolder }
+        for (index, tile) in boards.enumerated() {
             tile.frame = CGRect(
                 x: margin + CGFloat(index % columns) * (tileWidth + gap),
-                y: tileTop + CGFloat(index / columns) * 238, width: tileWidth, height: 220)
+                y: tileTop + CGFloat(index / columns) * rowHeight, width: tileWidth, height: tileHeight)
         }
-        let rows = (tiles.count + columns - 1) / columns
-        let pageBottom = tileTop + CGFloat(max(1, rows)) * 238
-        empty.frame = CGRect(x: margin, y: tileTop + 52, width: width - margin * 2, height: 100)
+        let boardRows = (boards.count + columns - 1) / columns
+        // Folders are navigation, so give them a compact, recognizable row instead
+        // of the large empty image preview used for a board.
+        let folderTop = tileTop + CGFloat(boardRows) * rowHeight + (boards.isEmpty ? 0 : 4)
+        for (index, tile) in folders.enumerated() {
+            tile.frame = CGRect(
+                x: margin + CGFloat(index % columns) * (tileWidth + gap),
+                y: folderTop + CGFloat(index / columns) * 94, width: tileWidth, height: 80)
+        }
+        let folderRows = (folders.count + columns - 1) / columns
+        let pageBottom = tiles.isEmpty ? tileTop + 180
+            : folders.isEmpty ? tileTop + CGFloat(boardRows) * rowHeight
+            : folderTop + CGFloat(folderRows) * 94
+        empty.frame = CGRect(x: margin, y: tileTop + 50, width: width - margin * 2, height: 100)
         let readyTop = folderFirst ? pageBottom + 28 : top
-        readyHeading.font = .systemFont(ofSize: global || !readyTiles.isEmpty ? 25 : 17, weight: .semibold)
-        readyHeading.frame = CGRect(x: margin, y: readyTop, width: width - margin * 2, height: 35)
+        readyHeading.font = .systemFont(ofSize: global ? 23 : readyTiles.isEmpty ? 16 : 21, weight: .semibold)
+        readyHeading.frame = CGRect(x: margin, y: readyTop, width: width - margin * 2, height: 29)
         readyDetail.isHidden = !global && readyTiles.isEmpty
-        readyDetail.frame = CGRect(x: margin, y: readyTop + 42, width: width - margin * 2, height: 22)
+        readyDetail.frame = CGRect(x: margin, y: readyTop + 33, width: width - margin * 2, height: 20)
         readyEmpty.frame = CGRect(
-            x: margin, y: readyTop + (global ? 82 : 38), width: width - margin * 2,
+            x: margin, y: readyTop + (global ? 74 : 34), width: width - margin * 2,
             height: global ? 60 : 36)
         for (index, tile) in readyTiles.enumerated() {
             tile.frame = CGRect(
                 x: margin + CGFloat(index % columns) * (tileWidth + gap),
-                y: readyTop + 86 + CGFloat(index / columns) * 238, width: tileWidth, height: 220)
+                y: readyTop + 72 + CGFloat(index / columns) * rowHeight, width: tileWidth, height: tileHeight)
         }
         let contentBottom = global || folderFirst ? readyTop + readyHeight : pageBottom + 28
         document.frame = CGRect(x: 0, y: 0, width: width, height: max(bounds.height, contentBottom))
@@ -513,6 +590,7 @@ final class WorkspaceOverview: NSView {
         selecting = true
         selectedPageIDs = eligiblePageIDs
         updateSelection()
+        selectionChanged?(selectedPageIDs, selecting)
     }
     @objc private func openReady(_ sender: NSButton) {
         guard readySnapshot.indices.contains(sender.tag) else { return }
@@ -527,6 +605,7 @@ final class WorkspaceOverview: NSView {
         selectedPageIDs.removeAll()
         selectionAnchor = nil
         updateSelection()
+        selectionChanged?(selectedPageIDs, selecting)
         window?.makeFirstResponder(self)
     }
     @objc private func mergeSelection(_ sender: Any?) {

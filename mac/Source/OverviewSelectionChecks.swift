@@ -18,6 +18,8 @@ func overviewSelectionTest(directory: URL) throws {
     view.frame = CGRect(x: 0, y: 0, width: 650, height: 580)
     var opened: UUID?
     var merged = Set<UUID>()
+    var selectionEvents: [(Set<UUID>, Bool)] = []
+    view.selectionChanged = { selectionEvents.append(($0, $1)) }
     view.openPage = { opened = $0 }
     view.mergePages = { merged = $0 }
     func render() {
@@ -36,6 +38,17 @@ func overviewSelectionTest(directory: URL) throws {
         (target ?? view).keyDown(with: event)
     }
     render()
+    // Sidebar synchronization filters out other folders and never echoes an event.
+    view.setMergeSelection([first.id, nested.id, UUID()], selecting: true)
+    try check(view.selectedPageIDs == [first.id] && view.selecting && selectionEvents.isEmpty)
+    view.setMergeSelection([first.id, third.id], selecting: true)
+    view.activatePage(second.id, modifiers: .shift)
+    try check(view.selectedPageIDs == [first.id, second.id])
+    view.activatePage(third.id, modifiers: [.command, .shift])
+    try check(view.selectedPageIDs == [first.id, second.id, third.id])
+    selectionEvents.removeAll()
+    view.setMergeSelection([], selecting: false)
+    try check(view.selectedPageIDs.isEmpty && !view.selecting && selectionEvents.isEmpty)
     let tiles = buttons(in: view).compactMap { $0 as? PagePreviewButton }
     try check(tiles.count == 4 && tiles.first { $0.page.id == nested.id }?.isFolder == true)
     tiles.first { $0.page.id == first.id }!.performClick(nil)
@@ -44,6 +57,7 @@ func overviewSelectionTest(directory: URL) throws {
     let select = buttons(in: view).first { $0.title == "Select boards" }!
     select.performClick(nil)
     try check(view.selecting && view.selectedPageIDs.isEmpty)
+    try check(selectionEvents.last?.0.isEmpty == true && selectionEvents.last?.1 == true)
     tiles.first { $0.page.id == first.id }!.performClick(nil)
     try check(view.selectedPageIDs == [first.id] && opened == nil)
     tiles.first { $0.page.id == nested.id }!.performClick(nil)
@@ -56,6 +70,7 @@ func overviewSelectionTest(directory: URL) throws {
     try check(merged == [first.id, third.id])
     key(53, characters: "\u{1B}", to: tiles.first { $0.page.id == first.id })
     try check(!view.selecting && view.selectedPageIDs.isEmpty)
+    try check(selectionEvents.last?.0.isEmpty == true && selectionEvents.last?.1 == false)
     key(0, characters: "a", flags: .command)
     try check(view.selectedPageIDs == [first.id, second.id, third.id])
     view.layoutSubtreeIfNeeded()
@@ -82,6 +97,8 @@ func overviewSelectionTest(directory: URL) throws {
     let firstTile = folderTiles.first { $0.page.id == first.id }!
     let readyTile = folderTiles.first { $0.page.name == "Image" }!
     try check(firstTile.frame.maxY <= view.bounds.height)
+    let folderTile = folderTiles.first { $0.page.id == nested.id }!
+    try check(folderTile.frame.height == 80 && folderTile.frame.minY > firstTile.frame.maxY)
     try check(folderTiles.filter { $0 !== readyTile }.allSatisfy { $0.frame.maxY < readyTile.frame.minY })
     store.activate(root.id)
     view.show(pages: store.workspace.pages(in: root.id), store: store)
@@ -99,6 +116,6 @@ func overviewSelectionTest(directory: URL) throws {
     try check(!store.showsWorkspaceOverview)
     try check(store.workspace.boards.first { $0.id == first.id }?.cards == first.cards)
     print(
-        "PASS: nested folder overview, real tile/select-button actions, safe folder exclusion, range/toggle selection, keyboard merge/escape/select-all, compact toolbar layout, folder-first design access, workspace ready-first layout and stale-selection cleanup"
+        "PASS: nested folder overview, real tile/select-button actions, safe folder exclusion, range/toggle selection, keyboard merge/escape/select-all, sidebar selection synchronization, compact toolbar and folder cards, folder-first design access, workspace ready-first layout and stale-selection cleanup"
     )
 }

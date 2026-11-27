@@ -21,16 +21,33 @@ final class FlippedView: NSView { override var isFlipped: Bool { true } }
 final class BoardButton: PasteboardHoverButton {
     var active = false { didSet { needsDisplay = true } }
     var isPage = false
+    var selectedForMerge = false { didSet { needsDisplay = true } }
+    var showsMergeSelection = false { didSet { needsDisplay = true } }
+    var activate: ((NSEvent.ModifierFlags) -> Void)?
+    var selectionKeyAction: ((NSEvent) -> Bool)?
+    override var acceptsFirstResponder: Bool { true }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, selectionKeyAction?(event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+    override func keyDown(with event: NSEvent) {
+        if selectionKeyAction?(event) == true { return }
+        super.keyDown(with: event)
+    }
     var symbolName = "square.grid.2x2"
     var badge: String?
     var rename: (() -> Void)?
     var dropTarget = false { didSet { needsDisplay = true } }
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2, let rename { rename() } else { super.mouseDown(with: event) }
+        if let activate, showsMergeSelection || !event.modifierFlags.intersection([.command, .shift]).isEmpty {
+            window?.makeFirstResponder(self)
+            activate(event.modifierFlags)
+        } else if event.clickCount == 2, let rename { rename() }
+        else { super.mouseDown(with: event) }
     }
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
-        if active || dropTarget {
+        if active || selectedForMerge || dropTarget {
             NSColor.pasteboardSelection.setFill()
             shape.fill()
         } else if hovering {
@@ -42,27 +59,41 @@ final class BoardButton: PasteboardHoverButton {
             shape.lineWidth = 1.5
             shape.stroke()
         }
-        let tint: NSColor = active ? .pasteboardAccent : .pasteboardMuted
-        let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        let tint: NSColor = active || selectedForMerge ? .pasteboardAccent : .pasteboardMuted
+        let symbol = NSImage(systemSymbolName: showsMergeSelection ? (selectedForMerge ? "checkmark.circle.fill" : "circle") : symbolName, accessibilityDescription: nil)
         let config = NSImage.SymbolConfiguration(pointSize: 13, weight: active ? .semibold : .regular)
             .applying(.init(paletteColors: [tint]))
-        symbol?.withSymbolConfiguration(config)?.draw(
-            in: CGRect(x: 10, y: bounds.midY - 8, width: 16, height: 16))
+        if showsMergeSelection && selectedForMerge {
+            NSColor.pasteboardAccent.setFill()
+            NSBezierPath(ovalIn: CGRect(x: 11, y: bounds.midY - 7, width: 14, height: 14)).fill()
+            let checkmark = NSBezierPath()
+            checkmark.move(to: CGPoint(x: 14, y: bounds.midY))
+            checkmark.line(to: CGPoint(x: 17, y: bounds.midY + 3))
+            checkmark.line(to: CGPoint(x: 22, y: bounds.midY - 3))
+            NSColor.pasteboardSurface.setStroke()
+            checkmark.lineWidth = 1.6
+            checkmark.lineCapStyle = .round
+            checkmark.lineJoinStyle = .round
+            checkmark.stroke()
+        } else {
+            symbol?.withSymbolConfiguration(config)?.draw(
+                in: CGRect(x: 10, y: bounds.midY - 8, width: 16, height: 16))
+        }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        let badgeWidth: CGFloat = badge == nil ? 0 : 29
+        let badgeWidth: CGFloat = badge == nil || showsMergeSelection ? 0 : 24
         title.draw(
-            in: CGRect(x: 34, y: bounds.midY - 8, width: max(1, bounds.width - 44 - badgeWidth), height: 20),
+            in: CGRect(x: 32, y: bounds.midY - 8, width: max(1, bounds.width - 40 - badgeWidth), height: 20),
             withAttributes: [
-                .font: NSFont.systemFont(ofSize: 12.5, weight: active ? .semibold : .medium),
-                .foregroundColor: active ? NSColor.pasteboardInk : NSColor.pasteboardMuted,
+                .font: NSFont.systemFont(ofSize: 12, weight: active || selectedForMerge ? .semibold : .regular),
+                .foregroundColor: active || selectedForMerge ? NSColor.pasteboardInk : NSColor.pasteboardMuted,
                 .paragraphStyle: paragraph,
             ])
-        if let badge {
-            let area = CGRect(x: bounds.maxX - 32, y: bounds.midY - 9, width: 25, height: 18)
+        if let badge, !showsMergeSelection {
+            let area = CGRect(x: bounds.maxX - 28, y: bounds.midY - 9, width: 22, height: 18)
             (active
                 ? NSColor.pasteboardAccent.withAlphaComponent(0.10)
-                : NSColor.pasteboardBorder.withAlphaComponent(0.35)).setFill()
+                : NSColor.clear).setFill()
             NSBezierPath(roundedRect: area, xRadius: 5, yRadius: 5).fill()
             let style = NSMutableParagraphStyle()
             style.alignment = .center
@@ -93,6 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private let readyButton = BoardButton(title: "Ready to post", target: nil, action: nil)
     private let backButton = NSButton()
     private var boardControls: [NSView] = []
+    private var headerControls: [NSView] = []
+    private var headerTitleLimit: NSLayoutConstraint?
+    private var headerCountLimit: NSLayoutConstraint?
+    private(set) var sidebarSelection = SidebarMergeSelection()
+    private let sidebarMergePanel = SidebarMergePanel()
+    private let sidebarSelectButton = NSButton()
+    private var sidebarMergeHeight: NSLayoutConstraint?
     private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
     private var sidebarSignature = ""
@@ -154,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: root.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 240),
+            sidebar.widthAnchor.constraint(equalToConstant: 256),
             header.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             header.topAnchor.constraint(equalTo: root.topAnchor),
@@ -192,6 +230,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         overview.newPage = { [weak self] in self?.newPage(nil) }
         overview.newFolder = { [weak self] in self?.newFolder(nil) }
         overview.mergePages = { [weak self] in self?.mergePages($0) }
+        overview.selectionChanged = { [weak self] ids, selecting in
+            guard let self else { return }
+            sidebarSelection.set(ids, parent: store.board.id, selecting: selecting, workspace: store.workspace, anchor: overview.selectionAnchor)
+            refreshSidebarSelection()
+        }
         overview.goBack = { [weak self] in self?.goToParent(nil) }
         overview.renamePage = { [weak self] in self?.rename(id: $0) }
         overview.deletePage = { [weak self] id in
@@ -340,11 +383,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func makeSidebar(_ sidebar: NSView) {
-        let brand = label("Pasteboard", size: 22, weight: .semibold)
+        let brand = label("Pasteboard", size: 20, weight: .semibold)
         let mark = NSImageView(image: PasteboardArtwork.smallIcon)
         mark.translatesAutoresizingMaskIntoConstraints = false
         mark.setAccessibilityLabel("Pasteboard")
-        let subtitle = label("A visual worktable.", size: 11, color: .pasteboardMuted)
+        let subtitle = label("Room for your ideas.", size: 11, color: .pasteboardMuted)
         readyButton.target = self
         readyButton.action = #selector(showAllReady(_:))
         readyButton.isBordered = false
@@ -355,6 +398,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         readyButton.font = .systemFont(ofSize: 13, weight: .medium)
         readyButton.toolTip = "Ready images and frames from every workspace"
         readyButton.translatesAutoresizingMaskIntoConstraints = false
+        sidebarSelectButton.image = NSImage(systemSymbolName: "checklist", accessibilityDescription: "Select boards for merge")
+        sidebarSelectButton.isBordered = false
+        sidebarSelectButton.contentTintColor = .pasteboardMuted
+        sidebarSelectButton.target = self
+        sidebarSelectButton.action = #selector(toggleSidebarSelection(_:))
+        sidebarSelectButton.toolTip = "Select boards to merge · or ⌘-click boards"
+        sidebarSelectButton.setAccessibilityLabel("Select boards for merge")
+        sidebarSelectButton.translatesAutoresizingMaskIntoConstraints = false
+        sidebarMergePanel.translatesAutoresizingMaskIntoConstraints = false
+        sidebarMergePanel.merge.target = self
+        sidebarMergePanel.merge.action = #selector(mergeSidebarBoards(_:))
+        sidebarMergePanel.cancel.target = self
+        sidebarMergePanel.cancel.action = #selector(cancelSidebarMerge(_:))
+        sidebarMergePanel.isHidden = true
+        sidebarMergeHeight = sidebarMergePanel.heightAnchor.constraint(equalToConstant: 0)
         let section = label("WORKSPACES", size: 10, weight: .semibold, color: .pasteboardMuted)
         let plus = NSButton(
             image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Workspace")!,
@@ -408,26 +466,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         for view in [
             mark, brand, subtitle, readyButton, section, plus, scroll, search, backups, updates,
             appearanceLabel,
-            appearancePicker,
+            appearancePicker, sidebarSelectButton, sidebarMergePanel,
         ] {
             sidebar.addSubview(view)
         }
         NSLayoutConstraint.activate([
             mark.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 55),
             mark.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 20),
-            mark.widthAnchor.constraint(equalToConstant: 30),
-            mark.heightAnchor.constraint(equalToConstant: 30),
+            mark.widthAnchor.constraint(equalToConstant: 27),
+            mark.heightAnchor.constraint(equalToConstant: 27),
             brand.centerYAnchor.constraint(equalTo: mark.centerYAnchor),
             brand.leadingAnchor.constraint(equalTo: mark.trailingAnchor, constant: 7),
             brand.trailingAnchor.constraint(lessThanOrEqualTo: sidebar.trailingAnchor, constant: -15),
             subtitle.topAnchor.constraint(equalTo: mark.bottomAnchor, constant: 6),
-            subtitle.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 25),
+            subtitle.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 22),
             readyButton.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 24),
             readyButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
             readyButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
             readyButton.heightAnchor.constraint(equalToConstant: 34),
-            section.topAnchor.constraint(equalTo: readyButton.bottomAnchor, constant: 24),
+            section.topAnchor.constraint(equalTo: readyButton.bottomAnchor, constant: 22),
             section.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
+            sidebarSelectButton.centerYAnchor.constraint(equalTo: section.centerYAnchor),
+            sidebarSelectButton.trailingAnchor.constraint(equalTo: plus.leadingAnchor, constant: -5),
+            sidebarSelectButton.widthAnchor.constraint(equalToConstant: 24),
+            sidebarSelectButton.heightAnchor.constraint(equalToConstant: 24),
             plus.centerYAnchor.constraint(equalTo: section.centerYAnchor),
             plus.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -22),
             plus.widthAnchor.constraint(equalToConstant: 22),
@@ -435,12 +497,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             scroll.topAnchor.constraint(equalTo: section.bottomAnchor, constant: 10),
             scroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 10),
             scroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -10),
-            scroll.bottomAnchor.constraint(equalTo: search.topAnchor, constant: -24),
+            scroll.bottomAnchor.constraint(equalTo: sidebarMergePanel.topAnchor, constant: -12),
+            sidebarMergePanel.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+            sidebarMergePanel.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
+            sidebarMergePanel.bottomAnchor.constraint(equalTo: search.topAnchor, constant: -14),
+            sidebarMergeHeight!,
             search.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
-            search.bottomAnchor.constraint(equalTo: backups.topAnchor, constant: -7),
+            search.bottomAnchor.constraint(equalTo: backups.topAnchor, constant: -3),
             search.heightAnchor.constraint(equalToConstant: 24),
             backups.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
-            backups.bottomAnchor.constraint(equalTo: updates.topAnchor, constant: -7),
+            backups.bottomAnchor.constraint(equalTo: updates.topAnchor, constant: -3),
             backups.heightAnchor.constraint(equalToConstant: 24),
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: rows.heightAnchor),
@@ -494,7 +560,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             view.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(view)
         }
+        headerControls = [groupButton!, colour, note, image, paste]
+        headerTitleLimit = titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: groupButton.leadingAnchor, constant: -18)
+        headerCountLimit = countLabel.trailingAnchor.constraint(lessThanOrEqualTo: groupButton.leadingAnchor, constant: -16)
         NSLayoutConstraint.activate([
+            headerTitleLimit!, headerCountLimit!,
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -28),
+            countLabel.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -28),
             backButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
             backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             backButton.widthAnchor.constraint(equalToConstant: 24),
@@ -503,7 +575,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 40),
             countLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             countLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
-            countLabel.trailingAnchor.constraint(lessThanOrEqualTo: groupButton.leadingAnchor, constant: -16),
             paste.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -22),
             paste.centerYAnchor.constraint(equalTo: header.topAnchor, constant: 58),
             paste.heightAnchor.constraint(equalToConstant: 32),
@@ -524,7 +595,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             groupButton.centerYAnchor.constraint(equalTo: paste.centerYAnchor),
             groupButton.heightAnchor.constraint(equalTo: paste.heightAnchor),
             groupButton.widthAnchor.constraint(equalToConstant: 74),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: groupButton.leadingAnchor, constant: -18),
         ])
     }
 
@@ -581,11 +651,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func refresh() {
+        let focusedSidebarID = (window?.firstResponder as? BoardButton)?.identifier.flatMap { UUID(uuidString: $0.rawValue) }
+        if revealedSidebarBoard != store.board.id {
+            sidebarSelection.clear()
+            overview.setMergeSelection([], selecting: false)
+        }
         if revealedSidebarBoard != store.board.id, !showsGlobalReady {
             for ancestor in store.workspace.ancestors(of: store.board.id) {
                 collapsedWorkspaces.remove(ancestor.id)
             }
         }
+        sidebarSelection.reconcile(store.workspace)
         let isOverview = showsGlobalReady || store.showsWorkspaceOverview
         titleLabel.stringValue = showsGlobalReady ? "Ready to post" : store.board.name
         window?.title = "\(titleLabel.stringValue) — Pasteboard"
@@ -631,12 +707,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         overview.isHidden = !isOverview
         canvas.isHidden = isOverview
-        for control in boardControls { control.isHidden = isOverview }
+        for control in boardControls + headerControls { control.isHidden = isOverview }
+        headerTitleLimit?.isActive = !isOverview
+        headerCountLimit?.isActive = !isOverview
         if isOverview {
             overview.show(
                 pages: showsGlobalReady ? [] : store.workspace.pages(in: store.board.id), store: store,
                 globally: showsGlobalReady)
         }
+        refreshSidebarSelection()
+        if sidebarSelection.selecting, let focusedSidebarID { focusSidebarBoard(focusedSidebarID) }
         canvas.refresh()
         updateCount()
         updateViewport()
@@ -673,12 +753,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             board.name + (board.parentID == nil ? " workspace" : container ? " folder" : " board")
                 + ", \(count) \(container ? "boards and folders" : "items")")
         button.rename = { [weak self] in self?.rename(id: board.id) }
+        button.activate = { [weak self] in self?.activateSidebarBoard(board.id, modifiers: $0) }
+        button.selectionKeyAction = { [weak self] event in self?.handleSidebarSelectionKey(event) ?? false }
         let menu = NSMenu()
         var actions: [(String, Selector)] = []
         if container {
             actions += [("New Board…", #selector(newPage(_:))), ("New Folder…", #selector(newFolder(_:)))]
         } else {
-            actions += [("Turn into Folder…", #selector(convertToFolder(_:)))]
+            actions += [("Select for Merge", #selector(beginSidebarMerge(_:))),
+                ("Turn into Folder…", #selector(convertToFolder(_:)))]
         }
         actions += [("Rename…", #selector(renameBoard(_:)))]
         for (title, selector) in actions {
@@ -694,10 +777,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         row.addSubview(button)
         sidebarTargets.append((row, board.id, button))
         rows.addArrangedSubview(row)
-        let indent = CGFloat(min(depth, 5)) * 12
+        let indent = CGFloat(min(depth, 5)) * 10
         NSLayoutConstraint.activate([
             row.widthAnchor.constraint(equalTo: rows.widthAnchor),
-            row.heightAnchor.constraint(equalToConstant: 36),
+            row.heightAnchor.constraint(equalToConstant: 34),
             button.topAnchor.constraint(equalTo: row.topAnchor),
             button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             button.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: indent + 17),
@@ -741,6 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
     @objc func showAllReady(_ sender: Any?) {
+        sidebarSelection.clear()
         canvas.finishEditing()
         canvas.cancelPointerInteraction()
         canvas.cancelCropping(nil)
@@ -852,6 +936,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return nil
     }
     func navigate(to id: UUID) {
+        sidebarSelection.clear()
+        overview.setMergeSelection([], selecting: false)
         showsGlobalReady = false
         canvas.finishEditing()
         canvas.cancelCropping(nil)
@@ -861,7 +947,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.activate(id)
         window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
     }
-    @objc func selectBoard(_ sender: NSButton) { if let id = targetID(sender) { navigate(to: id) } }
+    @objc func selectBoard(_ sender: NSButton) {
+        if let id = targetID(sender) { activateSidebarBoard(id) }
+    }
+    func activateSidebarBoard(_ id: UUID, modifiers: NSEvent.ModifierFlags = []) {
+        guard !store.workspace.isContainer(id),
+            sidebarSelection.selecting || !modifiers.intersection([.command, .shift]).isEmpty else {
+            navigate(to: id)
+            return
+        }
+        sidebarSelection.activate(id, modifiers: modifiers, workspace: store.workspace)
+        refreshSidebarSelection()
+        focusSidebarBoard(id)
+    }
+    private func focusSidebarBoard(_ id: UUID) {
+        if let button = sidebarTargets.first(where: { $0.1 == id })?.2 {
+            window?.makeFirstResponder(button)
+        }
+    }
+    private func refreshSidebarSelection() {
+        sidebarSelection.reconcile(store.workspace)
+        let selecting = sidebarSelection.selecting
+        let ids = sidebarSelection.ids
+        sidebarSelectButton.contentTintColor = selecting ? .pasteboardAccent : .pasteboardMuted
+        sidebarSelectButton.setAccessibilityValue(selecting ? "Selecting boards" : "Not selecting")
+        sidebarMergePanel.isHidden = !selecting
+        sidebarMergeHeight?.constant = selecting ? 96 : 0
+        sidebarMergePanel.title.stringValue = ids.isEmpty ? "Select boards to merge" : "\(ids.count) board\(ids.count == 1 ? "" : "s") selected"
+        sidebarMergePanel.detail.stringValue = ids.count < 2 ? "Choose two or more in one folder" : "Each becomes a named section"
+        sidebarMergePanel.merge.isEnabled = store.canMergeBoards(ids)
+        sidebarMergePanel.merge.title = ids.count >= 2 ? "Merge \(ids.count) boards…" : "Merge boards"
+        for (_, id, button) in sidebarTargets {
+            let board = store.workspace.boards.first { $0.id == id }
+            let eligible = !store.workspace.isContainer(id)
+            button.selectedForMerge = ids.contains(id)
+            button.showsMergeSelection = selecting && eligible && board?.parentID == sidebarSelection.parentID
+            if let board {
+                let count = eligible ? board.cards.count : store.workspace.pages(in: id).count
+                button.setAccessibilityLabel(board.name + (eligible ? " board" : " folder")
+                    + (ids.contains(id) ? ", selected for merge" : "") + ", \(count) \(eligible ? "items" : "boards and folders")")
+                button.toolTip = store.workspace.path(for: board)
+                    + (eligible ? " · ⌘-click to select for merge" : " · Right-click for options")
+            }
+            if let item = button.menu?.items.first(where: { $0.action == #selector(beginSidebarMerge(_:)) }) {
+                item.title = ids.contains(id) ? "Deselect for Merge" : "Select for Merge"
+            }
+            if let previous = button.menu?.items.first(where: { $0.action == #selector(mergeSidebarBoards(_:)) }) {
+                button.menu?.removeItem(previous)
+            }
+            if ids.contains(id), store.canMergeBoards(ids) {
+                let item = NSMenuItem(title: "Merge \(ids.count) Boards…", action: #selector(mergeSidebarBoards(_:)), keyEquivalent: "")
+                item.target = self
+                button.menu?.insertItem(item, at: 1)
+            }
+        }
+        if !showsGlobalReady && store.showsWorkspaceOverview {
+            overview.setMergeSelection(sidebarSelection.parentID == store.board.id ? ids : [],
+                selecting: selecting && sidebarSelection.parentID == store.board.id, anchor: sidebarSelection.anchor)
+        }
+    }
+    @objc func toggleSidebarSelection(_ sender: Any?) {
+        if sidebarSelection.selecting { cancelSidebarMerge(sender); return }
+        let parent = store.workspace.isContainer(store.board.id) ? store.board.id : store.board.parentID
+        guard let parent else { return }
+        sidebarSelection.set([], parent: parent, selecting: true, workspace: store.workspace)
+        refreshSidebarSelection()
+        if let first = sidebarSelection.eligible(in: parent, workspace: store.workspace).first {
+            focusSidebarBoard(first)
+        }
+    }
+    @objc func beginSidebarMerge(_ sender: Any?) {
+        guard let id = targetID(sender), !store.workspace.isContainer(id) else { return }
+        sidebarSelection.activate(id, modifiers: .command, workspace: store.workspace)
+        refreshSidebarSelection()
+        focusSidebarBoard(id)
+    }
+    @objc func cancelSidebarMerge(_ sender: Any?) {
+        sidebarSelection.clear()
+        refreshSidebarSelection()
+    }
+    @objc func mergeSidebarBoards(_ sender: Any?) {
+        sidebarSelection.reconcile(store.workspace)
+        guard store.canMergeBoards(sidebarSelection.ids) else { refreshSidebarSelection(); return }
+        mergePages(sidebarSelection.ids)
+    }
+    func handleSidebarSelectionKey(_ event: NSEvent) -> Bool {
+        guard sidebarSelection.selecting else { return false }
+        if event.keyCode == 53 { cancelSidebarMerge(nil); return true }
+        if event.keyCode == 36 || event.keyCode == 76 { mergeSidebarBoards(nil); return true }
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "a",
+            let parent = sidebarSelection.parentID {
+            let ids = Set(sidebarSelection.eligible(in: parent, workspace: store.workspace))
+            sidebarSelection.set(ids, parent: parent, selecting: true, workspace: store.workspace)
+            refreshSidebarSelection()
+            return true
+        }
+        return false
+    }
     @objc func toggleWorkspace(_ sender: NSButton) {
         guard let id = targetID(sender) else { return }
         if !collapsedWorkspaces.insert(id).inserted { collapsedWorkspaces.remove(id) }
@@ -986,7 +1168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         canvas.finishEditing()
         canvas.cancelPointerInteraction()
         canvas.cancelCropping(nil)
-        guard ids.count >= 2 else { return }
+        guard store.canMergeBoards(ids) else { return }
         guard !canvas.hasPendingImports else {
             let alert = NSAlert()
             alert.messageText = "Media is still importing"
@@ -1294,7 +1476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let alert = NSAlert()
         alert.messageText = "Make yourself some space."
         alert.informativeText =
-            "⌘N  New workspace\n⇧⌘N  New board in the current folder\nClick + beside a workspace or folder  Add a board\nFile → New Folder  Organise boards inside folders\nRight-click a board → Turn into Folder  Keep its items in an inner board\nSelect boards in an overview → Merge Boards  Combine designs as named sections\nClick a section title / Sections menu  Zoom into a design\n⌘[  Back to parent folder\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add images, videos or text files\nPlay button / double-click video  Open the player\nPaste a YouTube link  Add a playable video card\nReady to post at top of sidebar  All marked images across workspaces\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
+            "⌘N  New workspace\n⇧⌘N  New board in the current folder\nClick + beside a workspace or folder  Add a board\nFile → New Folder  Organise boards inside folders\nRight-click a board → Turn into Folder  Keep its items in an inner board\n⌘-click sidebar boards / right-click → Select for Merge\nShift-click  Select a range in one folder\nMerge boards in the sidebar or overview  Combine designs as named sections\nEsc / Done  Leave board selection\nClick a section title / Sections menu  Zoom into a design\n⌘[  Back to parent folder\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add images, videos or text files\nPlay button / double-click video  Open the player\nPaste a YouTube link  Add a playable video card\nReady to post at top of sidebar  All marked images across workspaces\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
         alert.beginSheetModal(for: window)
     }
     @objc func runSelfCheck(_ sender: Any?) {
