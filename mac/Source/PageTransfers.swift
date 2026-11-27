@@ -9,13 +9,18 @@ struct PageTransfer {
     let destination: UUID
     let originals: [Original]
     let moved: [Card]
+    let sourceSectionsBefore: [BoardSection]?
+    let destinationSectionsBefore: [BoardSection]?
+    let sourceSectionsAfter: [BoardSection]?
+    let destinationSectionsAfter: [BoardSection]?
 }
 
 extension BoardStore {
     func canMoveCards(_ ids: Set<UUID>, from sourceID: UUID, to destinationID: UUID) -> Bool {
         guard sourceID != destinationID,
             let source = workspace.boards.first(where: { $0.id == sourceID }),
-            workspace.boards.contains(where: { $0.id == destinationID }), !ids.isEmpty,
+            workspace.boards.contains(where: { $0.id == destinationID }),
+            !(workspaceOverviewsEnabled && workspace.isContainer(destinationID)), !ids.isEmpty,
             ids.isSubset(of: Set(source.cards.map(\.id)))
         else { return false }
         return source.expandedSelection(ids).isDisjoint(with: source.lockedIDs)
@@ -52,8 +57,40 @@ extension BoardStore {
             }
         }
         moved = Self.placeTransferred(moved, on: destination, viewport: viewport)
+        let liveSourceIDs = Set(source.cards.map(\.id))
+        let completeSections = (source.sections ?? []).filter {
+            let liveMembers = Set($0.memberIDs).intersection(liveSourceIDs)
+            return !liveMembers.isEmpty && liveMembers.isSubset(of: expanded)
+        }
+        let completeIDs = Set(completeSections.map(\.id))
+        var transferredSections: [BoardSection] = []
+        var existingSectionIDs = Set((destination.sections ?? []).map(\.id))
+        if let first = moved.first, let original = originals.first?.card {
+            let dx = first.x - original.x
+            let dy = first.y - original.y
+            for section in completeSections {
+                var copy = section
+                if existingSectionIDs.contains(copy.id) { copy.id = UUID() }
+                existingSectionIDs.insert(copy.id)
+                copy.memberIDs = section.memberIDs.map { identities[$0] ?? $0 }
+                let frame = source.sectionBounds(section)
+                copy.x = frame.minX + dx
+                copy.y = frame.minY + dy
+                copy.width = frame.width
+                copy.height = frame.height
+                transferredSections.append(copy)
+            }
+        }
+        var destinationWithSections = destination
+        if !transferredSections.isEmpty {
+            destinationWithSections.sections = (destination.sections ?? []) + transferredSections
+        }
         let command = PageTransfer(
-            source: sourceID, destination: destinationID, originals: originals, moved: moved)
+            source: sourceID, destination: destinationID, originals: originals, moved: moved,
+            sourceSectionsBefore: source.sections, destinationSectionsBefore: destination.sections,
+            sourceSectionsAfter: source.sections?.filter { !completeIDs.contains($0.id) },
+            destinationSectionsAfter: destinationWithSections.sectionsIncludingInsertedCards(
+                destination.cards + moved))
         backupNow()
         guard applyTransfer(command, forward: true) else { return nil }
         return Set(moved.map(\.id))
@@ -115,8 +152,12 @@ extension BoardStore {
         if forward {
             workspace.boards[source].cards.removeAll { sourceIDs.contains($0.id) }
             workspace.boards[destination].cards.append(contentsOf: transfer.moved)
+            workspace.boards[source].sections = transfer.sourceSectionsAfter
+            workspace.boards[destination].sections = transfer.destinationSectionsAfter
         } else {
             workspace.boards[destination].cards.removeAll { movedIDs.contains($0.id) }
+            workspace.boards[source].sections = transfer.sourceSectionsBefore
+            workspace.boards[destination].sections = transfer.destinationSectionsBefore
             for original in transfer.originals {
                 workspace.boards[source].cards.insert(
                     original.card, at: min(original.index, workspace.boards[source].cards.count))

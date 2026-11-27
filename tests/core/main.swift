@@ -16,6 +16,9 @@ func waitFor(_ condition: () -> Bool, timeout: Double = 10, file: String = #file
 let directory = URL(fileURLWithPath: "/private/tmp/PasteboardChecks-" + UUID().uuidString)
 defer { try? FileManager.default.removeItem(at: directory) }
 do {
+    try nestedSectionsTest(directory: directory.appendingPathComponent("sections"))
+    try sectionCanvasTest(directory: directory.appendingPathComponent("section-canvas"))
+    try overviewSelectionTest(directory: directory.appendingPathComponent("overview-selection"))
     try videoAndGlobalReadyTest(directory: directory.appendingPathComponent("videos"))
     try socialPostTest(directory: directory.appendingPathComponent("social"))
     try workspaceOverviewTest(directory: directory.appendingPathComponent("overview"))

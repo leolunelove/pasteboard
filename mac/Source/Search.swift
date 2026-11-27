@@ -102,6 +102,7 @@ struct BoardSearchResult {
     let cardID: UUID?
     let title: String
     let detail: String
+    var sectionID: UUID? = nil
 }
 enum BoardSearch {
     static func results(in workspace: Workspace, imageText: [String: String], query: String)
@@ -123,8 +124,17 @@ enum BoardSearch {
                 results.append(
                     BoardSearchResult(
                         boardID: board.id, cardID: nil, title: board.name,
-                        detail: (board.parentID == nil ? "Workspace" : path) + " · \(board.cards.count) items"
+                        detail: (board.parentID == nil ? "Workspace" : path) + " · "
+                            + (workspace.isContainer(board.id)
+                                ? "\(workspace.pages(in: board.id).count) boards and folders"
+                                : "\(board.cards.count) items")
                     ))
+            }
+            for section in board.sections ?? [] where matches(path + " " + section.name) {
+                results.append(
+                    BoardSearchResult(
+                        boardID: board.id, cardID: nil, title: section.name,
+                        detail: path + " · Section", sectionID: section.id))
             }
             for card in board.cards {
                 let recognized = card.asset.flatMap { imageText[$0] } ?? ""

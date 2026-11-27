@@ -19,44 +19,60 @@ final class Surface: NSView {
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
 final class BoardButton: PasteboardHoverButton {
-    var active = false
+    var active = false { didSet { needsDisplay = true } }
     var isPage = false
+    var symbolName = "square.grid.2x2"
+    var badge: String?
     var rename: (() -> Void)?
     var dropTarget = false { didSet { needsDisplay = true } }
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { rename?() } else { super.mouseDown(with: event) }
+        if event.clickCount == 2, let rename { rename() } else { super.mouseDown(with: event) }
     }
     override func draw(_ dirtyRect: NSRect) {
-        if active {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8)
+        if active || dropTarget {
             NSColor.pasteboardSelection.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+            shape.fill()
         } else if hovering {
-            NSColor.pasteboardSurface.withAlphaComponent(0.7).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
+            NSColor.pasteboardSurface.withAlphaComponent(0.65).setFill()
+            shape.fill()
         }
-        if dropTarget {
-            NSColor.pasteboardAccent.withAlphaComponent(0.14).setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill()
-            NSColor.pasteboardAccent.setStroke()
-            let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7)
-            outline.lineWidth = 1.5
-            outline.stroke()
+        if dropTarget || window?.firstResponder === self {
+            NSColor.pasteboardAccent.withAlphaComponent(0.8).setStroke()
+            shape.lineWidth = 1.5
+            shape.stroke()
         }
-        let symbol = NSImage(
-            systemSymbolName: isPage ? "doc" : "square.grid.2x2", accessibilityDescription: nil)!
-        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular).applying(
-            .init(paletteColors: [active ? .pasteboardAccent : .pasteboardMuted]))
-        symbol.withSymbolConfiguration(config)?.draw(
-            in: CGRect(x: 5, y: bounds.midY - 8, width: 16, height: 16))
+        let tint: NSColor = active ? .pasteboardAccent : .pasteboardMuted
+        let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: active ? .semibold : .regular)
+            .applying(.init(paletteColors: [tint]))
+        symbol?.withSymbolConfiguration(config)?.draw(
+            in: CGRect(x: 10, y: bounds.midY - 8, width: 16, height: 16))
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
+        let badgeWidth: CGFloat = badge == nil ? 0 : 29
         title.draw(
-            in: CGRect(x: 29, y: bounds.midY - 8, width: bounds.width - 36, height: 20),
+            in: CGRect(x: 34, y: bounds.midY - 8, width: max(1, bounds.width - 44 - badgeWidth), height: 20),
             withAttributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: active ? .medium : .regular),
+                .font: NSFont.systemFont(ofSize: 12.5, weight: active ? .semibold : .medium),
                 .foregroundColor: active ? NSColor.pasteboardInk : NSColor.pasteboardMuted,
                 .paragraphStyle: paragraph,
             ])
+        if let badge {
+            let area = CGRect(x: bounds.maxX - 32, y: bounds.midY - 9, width: 25, height: 18)
+            (active
+                ? NSColor.pasteboardAccent.withAlphaComponent(0.10)
+                : NSColor.pasteboardBorder.withAlphaComponent(0.35)).setFill()
+            NSBezierPath(roundedRect: area, xRadius: 5, yRadius: 5).fill()
+            let style = NSMutableParagraphStyle()
+            style.alignment = .center
+            (badge as NSString).draw(
+                in: area.offsetBy(dx: 0, dy: 1),
+                withAttributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+                    .foregroundColor: tint, .paragraphStyle: style,
+                ])
+        }
     }
 }
 
@@ -74,7 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var socialWindow: SocialPreviewWindow?
     private var videoWindow: VideoPlayerWindow?
     private var showsGlobalReady = false
-    private let readyButton = NSButton(title: "Ready to post", target: nil, action: nil)
+    private let readyButton = BoardButton(title: "Ready to post", target: nil, action: nil)
+    private let backButton = NSButton()
     private var boardControls: [NSView] = []
     private let appearancePicker = NSPopUpButton()
     var itemLabel = NSTextField(labelWithString: "")
@@ -137,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             sidebar.topAnchor.constraint(equalTo: root.topAnchor),
             sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 218),
+            sidebar.widthAnchor.constraint(equalToConstant: 240),
             header.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             header.topAnchor.constraint(equalTo: root.topAnchor),
@@ -173,6 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         overview.openPage = { [weak self] in self?.navigate(to: $0) }
         overview.newPage = { [weak self] in self?.newPage(nil) }
+        overview.newFolder = { [weak self] in self?.newFolder(nil) }
+        overview.mergePages = { [weak self] in self?.mergePages($0) }
+        overview.goBack = { [weak self] in self?.goToParent(nil) }
         overview.renamePage = { [weak self] in self?.rename(id: $0) }
         overview.deletePage = { [weak self] id in
             let item = NSMenuItem()
@@ -221,7 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window.orderBack(nil)
         }
         revealActiveSidebarRow()
-        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+        window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
         if let warning = store.loadWarning {
             let alert = NSAlert()
             alert.messageText = "Workspace recovery"
@@ -266,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         PreviewNotice.alert().beginSheetModal(for: window) { [weak self] _ in
             guard let self else { return }
             PreviewNotice.acknowledge(build: installedRelease.build)
-            window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+            window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
         }
     }
 
@@ -327,14 +347,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let subtitle = label("A visual worktable.", size: 11, color: .pasteboardMuted)
         readyButton.target = self
         readyButton.action = #selector(showAllReady(_:))
-        readyButton.bezelStyle = .rounded
+        readyButton.isBordered = false
+        readyButton.symbolName = "checkmark.circle"
         readyButton.setButtonType(.pushOnPushOff)
         readyButton.image = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)
         readyButton.imagePosition = .imageLeading
         readyButton.font = .systemFont(ofSize: 13, weight: .medium)
         readyButton.toolTip = "Ready images and frames from every workspace"
         readyButton.translatesAutoresizingMaskIntoConstraints = false
-        let section = label("Workspaces", size: 11, weight: .semibold, color: .pasteboardMuted)
+        let section = label("WORKSPACES", size: 10, weight: .semibold, color: .pasteboardMuted)
         let plus = NSButton(
             image: NSImage(systemSymbolName: "plus", accessibilityDescription: "New Workspace")!,
             target: self, action: #selector(newBoard(_:)))
@@ -353,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         scroll.documentView = document
         rows.orientation = .vertical
         rows.alignment = .leading
-        rows.spacing = 5
+        rows.spacing = 2
         rows.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(rows)
         let appearanceLabel = label("Appearance", size: 10, weight: .medium, color: .pasteboardMuted)
@@ -402,8 +423,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             subtitle.topAnchor.constraint(equalTo: mark.bottomAnchor, constant: 6),
             subtitle.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 25),
             readyButton.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 24),
-            readyButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 20),
-            readyButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -20),
+            readyButton.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+            readyButton.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
             readyButton.heightAnchor.constraint(equalToConstant: 34),
             section.topAnchor.constraint(equalTo: readyButton.bottomAnchor, constant: 24),
             section.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
@@ -411,9 +432,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             plus.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -22),
             plus.widthAnchor.constraint(equalToConstant: 22),
             plus.heightAnchor.constraint(equalToConstant: 22),
-            scroll.topAnchor.constraint(equalTo: section.bottomAnchor, constant: 17),
-            scroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
-            scroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
+            scroll.topAnchor.constraint(equalTo: section.bottomAnchor, constant: 10),
+            scroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 10),
+            scroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -10),
             scroll.bottomAnchor.constraint(equalTo: search.topAnchor, constant: -24),
             search.leadingAnchor.constraint(equalTo: subtitle.leadingAnchor),
             search.bottomAnchor.constraint(equalTo: backups.topAnchor, constant: -7),
@@ -462,12 +483,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let paste = button(
             "Paste", symbol: "doc.on.clipboard", action: #selector(pasteToBoard(_:)), primary: true)
         paste.toolTip = "Paste images, videos, YouTube links or text (⌘V)"
-        for view in [titleLabel, countLabel, groupButton!, colour, note, image, paste] {
+        backButton.image = NSImage(
+            systemSymbolName: "chevron.left", accessibilityDescription: "Back to parent folder")
+        backButton.isBordered = false
+        backButton.contentTintColor = .pasteboardMuted
+        backButton.target = self
+        backButton.action = #selector(goToParent(_:))
+        backButton.setAccessibilityLabel("Back to parent folder")
+        for view in [backButton, titleLabel, countLabel, groupButton!, colour, note, image, paste] {
             view.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(view)
         }
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
+            backButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
+            backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 24),
+            backButton.heightAnchor.constraint(equalToConstant: 28),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 42),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 40),
             countLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             countLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
@@ -491,7 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             groupButton.trailingAnchor.constraint(equalTo: colour.leadingAnchor, constant: -6),
             groupButton.centerYAnchor.constraint(equalTo: paste.centerYAnchor),
             groupButton.heightAnchor.constraint(equalTo: paste.heightAnchor),
-            groupButton.widthAnchor.constraint(equalToConstant: 88),
+            groupButton.widthAnchor.constraint(equalToConstant: 74),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: groupButton.leadingAnchor, constant: -18),
         ])
     }
@@ -549,13 +581,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func refresh() {
+        if revealedSidebarBoard != store.board.id, !showsGlobalReady {
+            for ancestor in store.workspace.ancestors(of: store.board.id) {
+                collapsedWorkspaces.remove(ancestor.id)
+            }
+        }
         let isOverview = showsGlobalReady || store.showsWorkspaceOverview
         titleLabel.stringValue = showsGlobalReady ? "Ready to post" : store.board.name
         window?.title = "\(titleLabel.stringValue) — Pasteboard"
-        readyButton.title = "Ready to post · \(store.allReadyPosts.count)"
+        readyButton.title = "Ready to post"
+        let readyCount = store.allReadyPosts.count
+        readyButton.badge = readyCount > 99 ? "99+" : "\(readyCount)"
+        readyButton.active = showsGlobalReady
+        readyButton.setAccessibilityLabel("Ready to post, \(readyCount) posts across all workspaces")
+        backButton.isHidden = isOverview || store.board.parentID == nil
+        backButton.toolTip = store.board.parentID.flatMap { parent in
+            store.workspace.boards.first(where: { $0.id == parent }).map { "Back to " + $0.name }
+        }
         readyButton.state = showsGlobalReady ? .on : .off
         let signature =
-            store.workspace.boards.map { $0.id.uuidString + $0.name + ($0.parentID?.uuidString ?? "") }
+            store.workspace.boards.map {
+                $0.id.uuidString + $0.name + ($0.parentID?.uuidString ?? "")
+                    + "\($0.isFolder == true):\($0.cards.count):\($0.sections?.count ?? 0)"
+            }
             .joined(separator: "|") + store.board.id.uuidString
             + collapsedWorkspaces.map(\.uuidString).sorted().joined()
             + (showsGlobalReady ? "global" : "board")
@@ -566,12 +614,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 rows.removeArrangedSubview(view)
                 view.removeFromSuperview()
             }
-            for root in store.workspace.roots {
-                addSidebarRow(root)
-                if !collapsedWorkspaces.contains(root.id) {
-                    for page in store.workspace.pages(in: root.id) { addSidebarRow(page) }
+            func append(_ board: Board, depth: Int) {
+                addSidebarRow(board, depth: depth)
+                if !collapsedWorkspaces.contains(board.id) {
+                    for child in store.workspace.pages(in: board.id) { append(child, depth: depth + 1) }
                 }
             }
+            for root in store.workspace.roots { append(root, depth: 0) }
         }
         // Reveal the destination on launch and navigation, without pulling the
         // sidebar back while someone scrolls it to browse or transfer items.
@@ -601,44 +650,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             row.scrollToVisible(row.bounds.insetBy(dx: 0, dy: -5))
         }
     }
-    private func addSidebarRow(_ board: Board) {
+    private func addSidebarRow(_ board: Board, depth: Int) {
         let row = NSView()
         row.translatesAutoresizingMaskIntoConstraints = false
+        let children = store.workspace.pages(in: board.id)
+        let container = board.parentID == nil || board.isFolder == true || !children.isEmpty
         let button = BoardButton(title: board.name, target: self, action: #selector(selectBoard(_:)))
         button.identifier = .init(board.id.uuidString)
         button.active = !showsGlobalReady && board.id == store.board.id
-        button.isPage = board.parentID != nil
+        button.symbolName =
+            board.parentID == nil
+            ? "square.grid.2x2"
+            : container
+                ? "folder"
+                : (board.sections?.isEmpty == false ? "rectangle.3.group" : "rectangle.on.rectangle")
+        let count = container ? children.count : board.cards.count
+        button.badge = count > 99 ? "99+" : "\(count)"
         button.isBordered = false
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.toolTip = store.workspace.path(for: board) + " · Right-click for rename, pages and delete"
-        button.setAccessibilityLabel(board.name + (board.parentID == nil ? " workspace" : " page"))
+        button.toolTip = store.workspace.path(for: board) + " · Right-click for options"
+        button.setAccessibilityLabel(
+            board.name + (board.parentID == nil ? " workspace" : container ? " folder" : " board")
+                + ", \(count) \(container ? "boards and folders" : "items")")
         button.rename = { [weak self] in self?.rename(id: board.id) }
         let menu = NSMenu()
-        for (title, selector) in [
-            ("New Page…", #selector(newPage(_:))),
-            (board.parentID == nil ? "Rename Workspace…" : "Rename Page…", #selector(renameBoard(_:))),
-        ] {
+        var actions: [(String, Selector)] = []
+        if container {
+            actions += [("New Board…", #selector(newPage(_:))), ("New Folder…", #selector(newFolder(_:)))]
+        } else {
+            actions += [("Turn into Folder…", #selector(convertToFolder(_:)))]
+        }
+        actions += [("Rename…", #selector(renameBoard(_:)))]
+        for (title, selector) in actions {
             let item = menu.addItem(withTitle: title, action: selector, keyEquivalent: "")
             item.target = self
             item.representedObject = board.id.uuidString
         }
         menu.addItem(.separator())
-        let delete = menu.addItem(
-            withTitle: board.parentID == nil ? "Delete Workspace…" : "Delete Page…",
-            action: #selector(deleteBoard(_:)), keyEquivalent: "")
+        let delete = menu.addItem(withTitle: "Delete…", action: #selector(deleteBoard(_:)), keyEquivalent: "")
         delete.target = self
         delete.representedObject = board.id.uuidString
         button.menu = menu
         row.addSubview(button)
         sidebarTargets.append((row, board.id, button))
         rows.addArrangedSubview(row)
+        let indent = CGFloat(min(depth, 5)) * 12
         NSLayoutConstraint.activate([
             row.widthAnchor.constraint(equalTo: rows.widthAnchor),
-            row.heightAnchor.constraint(equalToConstant: board.parentID == nil ? 38 : 34),
+            row.heightAnchor.constraint(equalToConstant: 36),
             button.topAnchor.constraint(equalTo: row.topAnchor),
             button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            button.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: indent + 17),
+            button.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: container ? -23 : -2),
         ])
-        if board.parentID == nil {
+        if container {
             let collapsed = collapsedWorkspaces.contains(board.id)
             let disclosure = NSButton(
                 image: NSImage(
@@ -648,35 +713,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             disclosure.identifier = .init(board.id.uuidString)
             disclosure.isBordered = false
             disclosure.contentTintColor = .pasteboardMuted
-            disclosure.imageScaling = .scaleProportionallyDown
+            disclosure.image = disclosure.image?.withSymbolConfiguration(
+                .init(pointSize: 8, weight: .semibold))
             let add = NSButton(
                 image: NSImage(
-                    systemSymbolName: "plus", accessibilityDescription: "New page in " + board.name)!,
+                    systemSymbolName: "plus", accessibilityDescription: "New board in " + board.name)!,
                 target: self, action: #selector(newPage(_:)))
             add.identifier = .init(board.id.uuidString)
             add.isBordered = false
-            add.contentTintColor = .pasteboardAccent
-            add.toolTip = "Add a page to " + board.name
+            add.contentTintColor = .pasteboardMuted
+            add.image = add.image?.withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+            add.toolTip = "New board in " + board.name
             for control in [disclosure, add] {
                 control.translatesAutoresizingMaskIntoConstraints = false
                 row.addSubview(control)
             }
             NSLayoutConstraint.activate([
-                disclosure.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                disclosure.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: indent),
                 disclosure.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                disclosure.widthAnchor.constraint(equalToConstant: 20),
-                disclosure.heightAnchor.constraint(equalToConstant: 22),
-                button.leadingAnchor.constraint(equalTo: disclosure.trailingAnchor),
-                button.trailingAnchor.constraint(equalTo: add.leadingAnchor, constant: -2),
-                add.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -1),
+                disclosure.widthAnchor.constraint(equalToConstant: 17),
+                disclosure.heightAnchor.constraint(equalToConstant: 26),
+                add.trailingAnchor.constraint(equalTo: row.trailingAnchor),
                 add.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                add.widthAnchor.constraint(equalToConstant: 21),
-                add.heightAnchor.constraint(equalToConstant: 22),
-            ])
-        } else {
-            NSLayoutConstraint.activate([
-                button.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 33),
-                button.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
+                add.widthAnchor.constraint(equalToConstant: 23),
+                add.heightAnchor.constraint(equalToConstant: 26),
             ])
         }
     }
@@ -695,12 +755,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             store.board.parentID.flatMap { id in store.workspace.boards.first(where: { $0.id == id })?.name }
             ?? "Workspace"
         let pageCount = store.workspace.pages(in: store.board.id).count
+        countLabel.toolTip = store.workspace.path(for: store.board)
         countLabel.stringValue =
             "\(location)  ·  \(count) \(count == 1 ? "item" : "items")"
             + (pageCount > 0 ? "  ·  \(pageCount) pages" : "")
             + (canvas.selection.isEmpty ? "" : "  ·  \(canvas.selection.count) selected")
         if store.showsWorkspaceOverview {
-            countLabel.stringValue = "Workspace  ·  \(pageCount) \(pageCount == 1 ? "page" : "pages")"
+            countLabel.stringValue =
+                "\(store.board.parentID == nil ? "Workspace" : "Folder")  ·  \(pageCount) \(pageCount == 1 ? "board or folder" : "boards and folders")"
         }
         if showsGlobalReady {
             countLabel.stringValue = "All workspaces · \(store.allReadyPosts.count) ready posts"
@@ -777,7 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.backgroundColor = .pasteboardCanvas
         window.contentView?.needsDisplay = true
         canvas.needsDisplay = true
-        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+        window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
     }
 
     private func targetID(_ sender: Any?) -> UUID? {
@@ -793,11 +855,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         showsGlobalReady = false
         canvas.finishEditing()
         canvas.cancelCropping(nil)
-        if let parent = store.workspace.boards.first(where: { $0.id == id })?.parentID {
-            collapsedWorkspaces.remove(parent)
-        }
+        for ancestor in store.workspace.ancestors(of: id) { collapsedWorkspaces.remove(ancestor.id) }
+        canvas.cancelPointerInteraction()
+        canvas.selection.removeAll()
         store.activate(id)
-        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+        window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
     }
     @objc func selectBoard(_ sender: NSButton) { if let id = targetID(sender) { navigate(to: id) } }
     @objc func toggleWorkspace(_ sender: NSButton) {
@@ -823,14 +885,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     @objc func toggleGrouping(_ sender: Any?) {
         if canvas.canGroup { canvas.groupSelection(sender) } else { canvas.ungroupSelection(sender) }
-        window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+        window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
     }
     @objc func pasteToBoard(_ sender: Any?) {
         if let text = NSApp.keyWindow?.firstResponder as? NSTextView {
             text.paste(sender)
         } else {
             ensureCanvasPage()
-            window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
+            window.makeFirstResponder((showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
             canvas.paste(sender)
         }
     }
@@ -860,27 +922,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             self?.store.newBoard(name: name)
         }
     }
+    private func insertionParent(_ sender: Any?) -> Board? {
+        guard
+            let target = store.workspace.boards.first(where: { $0.id == (targetID(sender) ?? store.board.id) }
+            )
+        else { return nil }
+        if store.workspace.isContainer(target.id) { return target }
+        return store.workspace.boards.first { $0.id == target.parentID }
+    }
     @objc func newPage(_ sender: Any?) {
         canvas.finishEditing()
         canvas.cancelCropping(nil)
-        guard let root = store.workspace.rootID(for: targetID(sender) ?? store.board.id),
-            let workspace = store.workspace.boards.first(where: { $0.id == root })
-        else { return }
-        askName(title: "New page in “\(workspace.name)”", initial: "Untitled page", button: "Create Page") {
+        guard let parent = insertionParent(sender) else { return }
+        askName(title: "New board in “\(parent.name)”", initial: "Untitled board", button: "Create Board") {
             [weak self] name in
             guard let self else { return }
-            collapsedWorkspaces.remove(root)
-            store.newPage(in: root, name: name)
+            showsGlobalReady = false
+            collapsedWorkspaces.remove(parent.id)
+            if let id = store.newPage(in: parent.id, name: name) { navigate(to: id) }
+        }
+    }
+    @objc func newFolder(_ sender: Any?) {
+        canvas.finishEditing()
+        canvas.cancelCropping(nil)
+        guard let parent = insertionParent(sender) else { return }
+        askName(title: "New folder in “\(parent.name)”", initial: "Untitled folder", button: "Create Folder")
+        { [weak self] name in
+            guard let self, let id = store.newFolder(in: parent.id, name: name) else { return }
+            navigate(to: id)
+        }
+    }
+    @objc func goToParent(_ sender: Any?) {
+        if !showsGlobalReady, let parent = store.board.parentID { navigate(to: parent) }
+    }
+    @objc func convertToFolder(_ sender: Any?) {
+        guard socialWindow?.flush() != false else { return }
+        canvas.finishEditing()
+        canvas.cancelPointerInteraction()
+        canvas.cancelCropping(nil)
+        let id = targetID(sender) ?? store.board.id
+        guard !canvas.hasPendingImports, let board = store.workspace.boards.first(where: { $0.id == id }),
+            board.parentID != nil, board.isFolder != true
+        else { return }
+        let alert = NSAlert()
+        alert.messageText = "Turn “\(board.name)” into a folder?"
+        alert.informativeText =
+            "Its existing items will stay together in a board inside the folder. You can then add more design boards and merge them into sections. A local backup is saved first."
+        alert.addButton(withTitle: "Create Folder")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            store.convertToFolder(id) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success: navigate(to: id)
+                case .failure(let error): canvas.showError(error)
+                }
+            }
+        }
+    }
+    private func mergePages(_ ids: Set<UUID>) {
+        guard socialWindow?.flush() != false else { return }
+        canvas.finishEditing()
+        canvas.cancelPointerInteraction()
+        canvas.cancelCropping(nil)
+        guard ids.count >= 2 else { return }
+        guard !canvas.hasPendingImports else {
+            let alert = NSAlert()
+            alert.messageText = "Media is still importing"
+            alert.informativeText =
+                "Let the import finish before merging so the new board includes every item."
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Merge \(ids.count) boards"
+        alert.informativeText =
+            "Each board becomes a named section on one canvas. The originals are replaced by the merged board. You can undo the merge; a local backup is saved first."
+        alert.addButton(withTitle: "Merge Boards")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: "Combined designs")
+        field.frame = CGRect(x: 0, y: 0, width: 320, height: 26)
+        field.setAccessibilityLabel("Merged board name")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn,
+                let name = BoardStore.cleanName(field.stringValue), !canvas.hasPendingImports
+            else { return }
+            store.status?("Backing up and merging boards…")
+            store.mergeBoards(ids, name: name) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let id):
+                    navigate(to: id)
+                    canvas.fitAll(nil)
+                    store.status?("\(ids.count) boards merged · click a section name to zoom in")
+                case .failure(let error): canvas.showError(error)
+                }
+            }
         }
     }
     @objc func renameBoard(_ sender: Any?) {
+        guard !showsGlobalReady || targetID(sender) != nil else { return }
         rename(id: targetID(sender) ?? store.board.id)
     }
     func rename(id: UUID) {
         canvas.finishEditing()
         guard let board = store.workspace.boards.first(where: { $0.id == id }) else { return }
         askName(
-            title: board.parentID == nil ? "Rename workspace" : "Rename page", initial: board.name,
+            title: board.parentID == nil
+                ? "Rename workspace" : board.isFolder == true ? "Rename folder" : "Rename board",
+            initial: board.name,
             button: "Rename"
         ) { [weak self] name in self?.store.renameBoard(id, name: name) }
     }
@@ -911,15 +1064,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let id = targetID(sender) ?? store.board.id
         guard let board = store.workspace.boards.first(where: { $0.id == id }) else { return }
         let scope = store.deletionScope(for: id)
-        let pages = scope.filter { $0.parentID == id }.count
+        let pages = max(0, scope.count - 1)
         let items = scope.reduce(0) { $0 + $1.cards.count }
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Delete \(board.parentID == nil ? "workspace" : "page") “\(board.name)”?"
-        let pageDescription = pages > 0 ? " and its \(pages) \(pages == 1 ? "page" : "pages")" : ""
+        alert.messageText =
+            "Delete \(board.parentID == nil ? "workspace" : board.isFolder == true ? "folder" : "board") “\(board.name)”?"
+        let pageDescription =
+            pages > 0
+            ? " and its \(pages) nested \(pages == 1 ? "board or folder" : "boards and folders")" : ""
         alert.informativeText =
-            "This removes the \(board.parentID == nil ? "workspace" : "page")\(pageDescription), containing \(items) \(items == 1 ? "item" : "items"). A local backup is saved first. You can restore it from Local backups in the sidebar."
-        let remove = alert.addButton(withTitle: board.parentID == nil ? "Delete Workspace" : "Delete Page")
+            "This removes the \(board.parentID == nil ? "workspace" : board.isFolder == true ? "folder" : "board")\(pageDescription), containing \(items) \(items == 1 ? "item" : "items"). A local backup is saved first. You can restore it from Local backups in the sidebar."
+        let remove = alert.addButton(
+            withTitle: board.parentID == nil
+                ? "Delete Workspace" : board.isFolder == true ? "Delete Folder" : "Delete Board")
         remove.hasDestructiveAction = true
         remove.keyEquivalent = ""
         alert.addButton(withTitle: "Cancel").keyEquivalent = "\r"
@@ -932,14 +1090,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     return
                 }
                 store.status?(
-                    "\(board.parentID == nil ? "Workspace" : "Page") deleted · saved in Local backups")
+                    "\(board.parentID == nil ? "Workspace" : board.isFolder == true ? "Folder" : "Board") deleted · saved in Local backups"
+                )
             }
         }
     }
     @objc func exportBoard(_ sender: Any?) {
         canvas.finishEditing()
         let panel = NSSavePanel()
-        panel.title = store.board.parentID == nil ? "Save workspace and pages" : "Save a portable page"
+        panel.title =
+            store.workspace.isContainer(store.board.id) ? "Save folder and boards" : "Save a portable board"
         panel.nameFieldStringValue = store.board.name + ".gatherboard"
         panel.allowedContentTypes = [UTType(filenameExtension: "gatherboard") ?? .data]
         panel.beginSheetModal(for: window) { [weak self] result in
@@ -959,8 +1119,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 guard let self else { return }
                 navigate(to: result.boardID)
                 window.makeKeyAndOrderFront(nil)
-                window.makeFirstResponder(store.showsWorkspaceOverview ? overview : canvas)
-                if let id = result.cardID { canvas.focusCards([id]) } else { canvas.fitAll(nil) }
+                window.makeFirstResponder(
+                    (showsGlobalReady || store.showsWorkspaceOverview) ? overview : canvas)
+                if let section = result.sectionID {
+                    canvas.zoomToSection(section)
+                } else if let id = result.cardID {
+                    canvas.focusCards([id])
+                } else {
+                    canvas.fitAll(nil)
+                }
             }
         }
         searchWindow?.present()
@@ -1024,9 +1191,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if showsGlobalReady, menuItem.representedObject == nil, let action = menuItem.action,
-            [#selector(renameBoard(_:)), #selector(deleteBoard(_:)), #selector(newPage(_:))].contains(action)
+            [
+                #selector(renameBoard(_:)), #selector(deleteBoard(_:)), #selector(newPage(_:)),
+                #selector(newFolder(_:)), #selector(convertToFolder(_:)),
+            ].contains(action)
         {
             return false
+        }
+        if let action = menuItem.action,
+            [#selector(exportPNG(_:)), #selector(exportPDF(_:)), #selector(exportBoard(_:))].contains(action)
+        {
+            if showsGlobalReady { return false }
+            if action != #selector(exportBoard(_:)), store.showsWorkspaceOverview { return false }
+        }
+        if menuItem.action == #selector(goToParent(_:)) {
+            return !showsGlobalReady && store.board.parentID != nil
+        }
+        if menuItem.action == #selector(convertToFolder(_:)) {
+            let id = targetID(menuItem) ?? store.board.id
+            guard let board = store.workspace.boards.first(where: { $0.id == id }) else { return false }
+            return !canvas.hasPendingImports && !store.workspace.isContainer(board.id)
         }
         if menuItem.action == #selector(changeAppearance(_:)) {
             menuItem.state =
@@ -1039,10 +1223,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             menuItem.state = canvas.snappingEnabled ? .on : .off
         }
         if menuItem.action == #selector(renameBoard(_:)), menuItem.representedObject == nil {
-            menuItem.title = store.board.parentID == nil ? "Rename Workspace…" : "Rename Page…"
+            menuItem.title =
+                store.board.parentID == nil
+                ? "Rename Workspace…" : store.board.isFolder == true ? "Rename Folder…" : "Rename Board…"
         }
         if menuItem.action == #selector(deleteBoard(_:)), menuItem.representedObject == nil {
-            menuItem.title = store.board.parentID == nil ? "Delete Workspace…" : "Delete Page…"
+            menuItem.title =
+                store.board.parentID == nil
+                ? "Delete Workspace…" : store.board.isFolder == true ? "Delete Folder…" : "Delete Board…"
         }
         return true
     }
@@ -1051,9 +1239,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             canvas.cancelCropping(nil)
             return
         }
-        NSApp.keyWindow?.firstResponder?.undoManager?.undo()
+        if let keyWindow = NSApp.keyWindow, keyWindow !== window {
+            keyWindow.firstResponder?.undoManager?.undo()
+        } else if let editor = window.firstResponder as? NSTextView {
+            editor.undoManager?.undo()
+        } else {
+            store.history.undo()
+        }
     }
-    @objc func redo(_ sender: Any?) { NSApp.keyWindow?.firstResponder?.undoManager?.redo() }
+    @objc func redo(_ sender: Any?) {
+        if let keyWindow = NSApp.keyWindow, keyWindow !== window {
+            keyWindow.firstResponder?.undoManager?.redo()
+        } else if let editor = window.firstResponder as? NSTextView {
+            editor.undoManager?.redo()
+        } else {
+            store.history.redo()
+        }
+    }
     @objc func saveNow(_ sender: Any?) {
         guard socialWindow?.flush() != false else { return }
         canvas.finishEditing()
@@ -1092,7 +1294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let alert = NSAlert()
         alert.messageText = "Make yourself some space."
         alert.informativeText =
-            "⌘N  New workspace\n⇧⌘N  New page in the current workspace\nClick + beside a workspace  Add a page\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add images, videos or text files\nPlay button / double-click video  Open the player\nPaste a YouTube link  Add a playable video card\nReady to post at top of sidebar  All marked images across workspaces\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
+            "⌘N  New workspace\n⇧⌘N  New board in the current folder\nClick + beside a workspace or folder  Add a board\nFile → New Folder  Organise boards inside folders\nRight-click a board → Turn into Folder  Keep its items in an inner board\nSelect boards in an overview → Merge Boards  Combine designs as named sections\nClick a section title / Sections menu  Zoom into a design\n⌘[  Back to parent folder\nDouble-click a sidebar name or right-click → Rename\nRight-click a workspace or page → Delete\nLocal backups  Restore deleted content\nClick a workspace chevron  Collapse / expand pages\nDrag images, notes, or a group onto a sidebar page  Move them\n⌘Z / ⇧⌘Z  Undo / redo across pages\nApp updates → Update and Relaunch  Install the latest local build\n\nS / Colour  Add a colour swatch with a visible HEX code\nDouble-click a swatch  Edit its colour\nRight-click a swatch → Copy HEX\n\n⌘V  Paste images, SVG artwork/markup, or text\n⌘O  Add images, videos or text files\nPlay button / double-click video  Open the player\nPaste a YouTube link  Add a playable video card\nReady to post at top of sidebar  All marked images across workspaces\nT / double-click blank space  Add a note\nDouble-click a note  Edit its text\nEsc / click outside a note  Finish editing\nSpace + drag / two-finger scroll  Pan\nPinch / ⌘ + or −  Zoom\nTab / ⇧Tab  Focus next / previous item or group\nMinimap  Click to jump; drag the view to pan\nView → Show Minimap  Show / hide the overview\n⌘0  Fit everything\nEdges, centres, and equal gaps snap while dragging\nOption while dragging  Temporarily bypass snapping\nView → Snap to Objects  Turn snapping on or off\nShift-click / drag empty space  Select items\n⌘G / ⇧⌘G  Group / ungroup selection\nDrag a group corner  Scale images, notes, text, and spacing together\n⌘D  Duplicate selection\nDelete  Remove selection\n⌘Z / ⇧⌘Z  Undo / redo\nRight-click a note  Change its colour\n\nDouble-click an image / ⇧⌘C  Crop image\nDrag crop edges or corners; drag inside to reposition\nReturn / Esc  Apply / cancel crop\nEdit → Reset Image Crop  Restore the original\n⇧⌘L  Lock / unlock selection\n⌘F  Search notes, boards, sources and text in images\n⇧⌘E  Export PNG (selection or whole board)\nFile → Export PDF  Export a single-page PDF\nRight-click → Edit Source Link / Open Source\nSidebar → Local backups  Back up or restore as new boards\n\nEverything saves locally. Automatic checkpoints include images. File → Export Board Copy creates a portable backup containing the images too."
         alert.beginSheetModal(for: window)
     }
     @objc func runSelfCheck(_ sender: Any?) {
@@ -1146,9 +1348,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         item(app, "Quit Pasteboard", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
         let file = menu("File")
         item(file, "New Workspace…", #selector(newBoard(_:)), "n", target: self)
-        item(file, "New Page…", #selector(newPage(_:)), "n", [.command, .shift], target: self)
-        item(file, "Rename Workspace or Page…", #selector(renameBoard(_:)), target: self)
-        item(file, "Delete Workspace or Page…", #selector(deleteBoard(_:)), target: self)
+        item(file, "New Board…", #selector(newPage(_:)), "n", [.command, .shift], target: self)
+        item(file, "New Folder…", #selector(newFolder(_:)), target: self)
+        item(file, "Turn Board into Folder…", #selector(convertToFolder(_:)), target: self)
+        item(file, "Rename…", #selector(renameBoard(_:)), target: self)
+        item(file, "Delete…", #selector(deleteBoard(_:)), target: self)
         file.addItem(.separator())
         item(file, "Add Images, Videos or Open Board…", #selector(importImages(_:)), "o", target: self)
         item(file, "Add Colour Swatch…", #selector(addColour(_:)), target: self)
@@ -1196,6 +1400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         arrangeItem.submenu = canvas.arrangementMenu()
         main.addItem(arrangeItem)
         let view = menu("View")
+        item(view, "Back to Parent Folder", #selector(goToParent(_:)), "[", target: self)
+        view.addItem(.separator())
         let appearance = NSMenu(title: "Appearance")
         let appearanceItem = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
         appearanceItem.submenu = appearance

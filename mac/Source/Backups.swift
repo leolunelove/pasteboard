@@ -15,6 +15,7 @@ final class LocalBackups {
     let folder: URL
     private var lastDate = Date.distantPast
     private var lastFingerprint: String?
+    private var lastRecordID: UUID?
     private var loadedPreviousState = false
     init(directory: URL) {
         self.directory = directory
@@ -27,6 +28,8 @@ final class LocalBackups {
             let name: String
             let cards: [Card]
             let parentID: UUID?
+            let isFolder: Bool?
+            let sections: [BoardSection]?
         }
         let boards: [Entry]
     }
@@ -36,7 +39,9 @@ final class LocalBackups {
         let data = try encoder.encode(
             Content(
                 boards: workspace.boards.map {
-                    Content.Entry(id: $0.id, name: $0.name, cards: $0.cards, parentID: $0.parentID)
+                    Content.Entry(
+                        id: $0.id, name: $0.name, cards: $0.cards, parentID: $0.parentID,
+                        isFolder: $0.isFolder, sections: $0.sections)
                 }))
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -54,10 +59,15 @@ final class LocalBackups {
             {
                 lastDate = latest.created
                 lastFingerprint = hash
+                lastRecordID = latest.id
             }
         }
         let hash = try fingerprint(workspace)
-        guard hash != lastFingerprint else { return }
+        if hash == lastFingerprint {
+            // Explicit checkpoints protect structural changes. A cached fingerprint alone
+            // is insufficient if a previous checkpoint was removed or damaged externally.
+            if !force || checkpointIsComplete(fingerprint: hash, workspace: workspace) { return }
+        }
         guard force || now.timeIntervalSince(lastDate) >= 300 else { return }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let record = BackupRecord(
@@ -85,12 +95,29 @@ final class LocalBackups {
             try FileManager.default.moveItem(at: staging, to: destination)
             lastDate = now
             lastFingerprint = hash
+            lastRecordID = record.id
             try prune(now: now)
         } catch {
             try? FileManager.default.removeItem(at: staging)
             throw error
         }
     }
+    private func checkpointIsComplete(fingerprint hash: String, workspace: Workspace) -> Bool {
+        guard let id = lastRecordID else { return false }
+        let checkpoint = folder.appendingPathComponent(id.uuidString)
+        guard let metadata = try? Data(contentsOf: checkpoint.appendingPathComponent("Record.json")),
+            let record = try? JSONDecoder().decode(BackupRecord.self, from: metadata), record.id == id,
+            let data = try? Data(contentsOf: checkpoint.appendingPathComponent("Workspace.json")),
+            let saved = try? JSONDecoder().decode(Workspace.self, from: data),
+            (try? fingerprint(saved)) == hash
+        else { return false }
+        return Set(workspace.boards.flatMap { $0.cards.flatMap(\.assetNames) }).allSatisfy {
+            FileManager.default.fileExists(
+                atPath: checkpoint.appendingPathComponent("Assets")
+                    .appendingPathComponent($0).path)
+        }
+    }
+
     func records() -> [BackupRecord] {
         let paths =
             (try? FileManager.default.contentsOfDirectory(
@@ -124,7 +151,7 @@ final class LocalBackups {
         guard workspace.version == 1, Workspace.validHierarchy(workspace.boards),
             workspace.boards.allSatisfy({
                 Set($0.cards.map(\.id)).count == $0.cards.count && $0.cards.allSatisfy(BoardStore.valid)
-                    && $0.zoom.isFinite && (0.1...4).contains($0.zoom)
+                    && $0.validSections && $0.zoom.isFinite && (0.1...4).contains($0.zoom)
                     && $0.offsetX.isFinite && $0.offsetY.isFinite
             })
         else { throw CocoaError(.fileReadCorruptFile) }
@@ -145,6 +172,12 @@ final class LocalBackups {
             board.name += " (restored)"
             var groups: [UUID: UUID] = [:]
             let cardIDs = Dictionary(uniqueKeysWithValues: board.cards.map { ($0.id, UUID()) })
+            board.sections = board.sections?.map { section in
+                var copy = section
+                copy.id = UUID()
+                copy.memberIDs = section.memberIDs.map { cardIDs[$0] ?? $0 }
+                return copy
+            }
             for i in board.cards.indices {
                 board.cards[i].id = cardIDs[board.cards[i].id]!
                 if var draft = board.cards[i].socialPost {

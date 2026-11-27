@@ -1,9 +1,5 @@
-Ready to post now sits above Workspaces and collects marked images and frames from every workspace.
-The global collection shows each post’s workspace/page and opens its saved social preview and caption.
-Paste, drop or add local videos with Media or Command O. Press Play or double-click a video card to open its player.
-Video playback includes pause, seeking, volume and fullscreen; closing the player stops playback.
-Paste YouTube watch, Shorts, live or youtu.be links to add playable video cards, including start times.
-YouTube loads only when you press Play. Open on YouTube is available for videos that restrict embedding.
-Videos are stored locally and included in backups and portable board copies. Page moves and duplicate cards keep their clips.
-Videos and selections containing videos cannot be marked Ready to Post.
-Pasteboard remains an early preview. Keep a backup of important boards.
+Organise designs inside nested folders, with visual overviews at every level. Turn an existing board into a folder while keeping its items together in an inner board.
+Select sibling boards in an overview and merge them into one canvas with named design sections. A local backup is saved first; undo restores the originals.
+Click a section title to smoothly zoom in, use the Sections menu to jump between designs, and Overview to fit the whole canvas. Section boundaries also appear in the minimap.
+A refined sidebar adds clearer hierarchy, folder and section icons, item counts, quieter controls, and a Back to Parent Folder shortcut.
+Nested folders and sections are preserved in local backups and portable board copies. Ready posts and search work across the full hierarchy.

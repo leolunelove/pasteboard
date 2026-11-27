@@ -154,10 +154,17 @@ func pageTransferTest(directory: URL, image: NSImage) throws {
     try waitFor { !view.hasPendingImports }
     try check(
         dragStore.workspace.boards.first(where: { $0.id == a })!.cards.count == 1 && dragStore.board.id == b)
+    // The completed background paste is its own undo step after the page transfer.
     dragStore.history.undo()
+    try check(dragStore.board.id == a && dragStore.board.cards.isEmpty)
+    try check(dragStore.workspace.boards.first(where: { $0.id == b })!.cards.contains { $0.id == card.id })
+    dragStore.history.undo()
+    try check(dragStore.board.id == a && dragStore.board.cards == [card])
+    dragStore.history.redo()
+    dragStore.history.redo()
     try check(
-        dragStore.board.id == a && dragStore.board.cards.contains(card)
-            && dragStore.board.cards.contains { $0.asset != nil })
+        dragStore.board.id == a && dragStore.board.cards.count == 1 && dragStore.board.cards[0].asset != nil)
+    try check(dragStore.workspace.boards.first(where: { $0.id == b })!.cards.contains { $0.id == card.id })
     print(
         "PASS: sidebar page transfer, mixed groups, locks, collision-safe identity, placement, cross-page undo/redo, background imports, mouse hover/drop/cancel and save/reload"
     )

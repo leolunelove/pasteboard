@@ -126,6 +126,8 @@ struct Board: Codable, Equatable {
     var offsetX: Double = 160
     var offsetY: Double = 140
     var parentID: UUID?
+    var isFolder: Bool?
+    var sections: [BoardSection]?
 
     func expandedSelection(_ ids: Set<UUID>) -> Set<UUID> {
         let groups = Set(cards.filter { ids.contains($0.id) }.compactMap(\.groupID))
@@ -148,21 +150,60 @@ struct Workspace: Codable {
     var boards = [Board(name: "My first board")]
     var active: UUID?
     var roots: [Board] { boards.filter { $0.parentID == nil } }
-    func rootID(for id: UUID) -> UUID? { boards.first(where: { $0.id == id }).map { $0.parentID ?? $0.id } }
-    func pages(in id: UUID) -> [Board] { boards.filter { $0.parentID == id } }
-    func path(for board: Board) -> String {
-        guard let parent = board.parentID, let root = boards.first(where: { $0.id == parent }) else {
-            return board.name
+    func ancestors(of id: UUID) -> [Board] {
+        let lookup = Dictionary(boards.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [Board] = []
+        var seen: Set<UUID> = [id]
+        var parent = lookup[id]?.parentID
+        while let next = parent, seen.insert(next).inserted, let board = lookup[next] {
+            result.append(board)
+            parent = board.parentID
         }
-        return root.name + " / " + board.name
+        return result
+    }
+    func rootID(for id: UUID) -> UUID? {
+        guard let board = boards.first(where: { $0.id == id }) else { return nil }
+        return ancestors(of: id).last?.id ?? board.id
+    }
+    func pages(in id: UUID) -> [Board] { boards.filter { $0.parentID == id } }
+    func descendants(of id: UUID) -> [Board] {
+        var included: Set<UUID> = [id]
+        var frontier = [id]
+        let children = Dictionary(
+            grouping: boards.compactMap { board in
+                board.parentID.map { ($0, board) }
+            }, by: { $0.0 })
+        while let parent = frontier.popLast() {
+            for (_, child) in children[parent] ?? [] where included.insert(child.id).inserted {
+                frontier.append(child.id)
+            }
+        }
+        return boards.filter { $0.id != id && included.contains($0.id) }
+    }
+    func isContainer(_ id: UUID) -> Bool {
+        guard let board = boards.first(where: { $0.id == id }) else { return false }
+        return board.parentID == nil || board.isFolder == true || boards.contains { $0.parentID == id }
+    }
+    func path(for board: Board) -> String {
+        (ancestors(of: board.id).reversed().map(\.name) + [board.name]).joined(separator: " / ")
     }
     static func validHierarchy(_ boards: [Board]) -> Bool {
         guard !boards.isEmpty, Set(boards.map(\.id)).count == boards.count else { return false }
-        let roots = Set(boards.filter { $0.parentID == nil }.map(\.id))
-        return !roots.isEmpty
-            && boards.allSatisfy {
-                $0.parentID == nil || ($0.parentID != $0.id && roots.contains($0.parentID!))
+        let lookup = Dictionary(uniqueKeysWithValues: boards.map { ($0.id, $0) })
+        var validated = Set(boards.filter { $0.parentID == nil }.map(\.id))
+        guard !validated.isEmpty else { return false }
+        for board in boards {
+            var path = Set<UUID>()
+            var current = board.id
+            while !validated.contains(current) {
+                guard path.insert(current).inserted, let parent = lookup[current]?.parentID,
+                    lookup[parent] != nil
+                else { return false }
+                current = parent
             }
+            validated.formUnion(path)
+        }
+        return true
     }
 }
 
@@ -217,6 +258,8 @@ final class BoardStore {
                             loaded.boards.allSatisfy({
                                 $0.zoom.isFinite && (0.1...4).contains($0.zoom) && $0.offsetX.isFinite
                                     && $0.offsetY.isFinite && $0.cards.allSatisfy(Self.valid)
+                                    && $0.validSections
+                                    && Set($0.cards.map(\.id)).count == $0.cards.count
                             })
                         else { throw CocoaError(.fileReadCorruptFile) }
                         return loaded
@@ -240,13 +283,16 @@ final class BoardStore {
     // The entire previous layout is backed up before a single atomic replacement.
     func enableWorkspaceOverviews() throws {
         var next = workspace
-        let roots = next.roots.filter { !$0.cards.isEmpty }
-        if !roots.isEmpty {
+        let containers = next.boards.filter {
+            next.isContainer($0.id) && (!$0.cards.isEmpty || !($0.sections ?? []).isEmpty)
+        }
+        if !containers.isEmpty {
             let previous = workspace
-            for root in roots {
+            for root in containers {
                 var page = root
                 page.id = UUID()
                 page.parentID = root.id
+                page.isFolder = nil
                 let names = Set(next.pages(in: root.id).map(\.name))
                 var name = "Board"
                 var number = 2
@@ -258,6 +304,7 @@ final class BoardStore {
                 next.boards.append(page)
                 if let index = next.boards.firstIndex(where: { $0.id == root.id }) {
                     next.boards[index].cards = []
+                    next.boards[index].sections = nil
                 }
             }
             try saveQueue.sync {
@@ -352,7 +399,10 @@ final class BoardStore {
         }
     }
 
-    func replaceCards(_ cards: [Card], name: String, boardID: UUID? = nil) {
+    func replaceCards(
+        _ cards: [Card], name: String, boardID: UUID? = nil,
+        insertionPoint: CGPoint? = nil
+    ) {
         let id = boardID ?? board.id
         guard let index = workspace.boards.firstIndex(where: { $0.id == id }) else { return }
         let previous = workspace.boards[index].cards
@@ -361,16 +411,21 @@ final class BoardStore {
         let ownsGroup = !history.isUndoing && !history.isRedoing
         if ownsGroup { history.beginUndoGrouping() }
         history.registerUndo(withTarget: self) {
-            $0.revertCards(from: cards, to: previous, name: name, boardID: id)
+            $0.revertCards(from: cards, to: previous, name: name, boardID: id, insertionPoint: insertionPoint)
         }
         history.setActionName(name)
         if ownsGroup { history.endUndoGrouping() }
+        workspace.boards[index].sections = workspace.boards[index].sectionsIncludingInsertedCards(
+            cards, insertionPoint: insertionPoint)
         workspace.boards[index].cards = cards
         if history.isUndoing || history.isRedoing { workspace.active = id }
         scheduleSave()
         changed?()
     }
-    private func revertCards(from after: [Card], to before: [Card], name: String, boardID: UUID) {
+    private func revertCards(
+        from after: [Card], to before: [Card], name: String, boardID: UUID,
+        insertionPoint: CGPoint?
+    ) {
         guard let index = workspace.boards.firstIndex(where: { $0.id == boardID }) else { return }
         let beforeIDs = Set(before.map(\.id))
         let afterIDs = Set(after.map(\.id))
@@ -391,7 +446,7 @@ final class BoardStore {
             let current = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0) })
             cards = before.compactMap { current[$0.id] } + cards.filter { !beforeIDs.contains($0.id) }
         }
-        replaceCards(cards, name: name, boardID: boardID)
+        replaceCards(cards, name: name, boardID: boardID, insertionPoint: insertionPoint)
     }
 
     // A drag previews positions in memory, then registers one undo step when released.
@@ -418,10 +473,11 @@ final class BoardStore {
         activate(next.id)
     }
     @discardableResult func newPage(in workspaceID: UUID, name: String) -> UUID? {
-        guard let root = workspace.rootID(for: workspaceID), let name = Self.cleanName(name) else {
-            return nil
-        }
-        let page = Board(name: name, parentID: root)
+        guard let current = workspace.boards.first(where: { $0.id == workspaceID }),
+            let name = Self.cleanName(name)
+        else { return nil }
+        let parent = workspace.isContainer(workspaceID) ? workspaceID : current.parentID ?? workspaceID
+        let page = Board(name: name, parentID: parent)
         workspace.boards.append(page)
         activate(page.id)
         return page.id
@@ -440,7 +496,7 @@ final class BoardStore {
         changed?()
     }
     func deletionScope(for id: UUID) -> [Board] {
-        workspace.boards.filter { $0.id == id || $0.parentID == id }
+        workspace.boards.filter { $0.id == id } + workspace.descendants(of: id)
     }
     func deleteBoardWithBackup(_ id: UUID, completion: @escaping (Result<Void, Error>) -> Void) {
         let scope = deletionScope(for: id)
@@ -476,7 +532,7 @@ final class BoardStore {
     // The UI uses deleteBoardWithBackup; this mutation also serves recovery checks.
     func removeBoard(_ id: UUID) {
         guard let target = workspace.boards.first(where: { $0.id == id }) else { return }
-        let removed = Set(workspace.boards.filter { $0.id == id || $0.parentID == id }.map(\.id))
+        let removed = Set(deletionScope(for: id).map(\.id))
         workspace.boards.removeAll { removed.contains($0.id) }
         if workspace.boards.isEmpty { workspace.boards = [Board(name: "My first board")] }
         if workspace.active.map(removed.contains) == true {
@@ -509,9 +565,11 @@ final class BoardStore {
                 switch result {
                 case .failure(let error): completion(.failure(error))
                 case .success(let boards):
+                    let previous = self.workspace
                     self.workspace.boards.append(contentsOf: boards)
                     if self.workspaceOverviewsEnabled {
                         do { try self.enableWorkspaceOverviews() } catch {
+                            self.workspace = previous
                             completion(.failure(error))
                             return
                         }
@@ -659,7 +717,7 @@ final class BoardStore {
     func portableData() throws -> Data {
         var exported = board
         exported.parentID = nil
-        let pages = board.parentID == nil ? workspace.pages(in: board.id) : []
+        let pages = workspace.descendants(of: board.id)
         var assets: [String: Data] = [:]
         let hasVideos = ([exported] + pages).contains { $0.cards.contains(where: \.isVideo) }
         var total: Int64 = 0
@@ -682,9 +740,11 @@ final class BoardStore {
         let pages = imported.pages ?? []
         let boards = [imported.board] + pages
         guard imported.version == 1, imported.board.parentID == nil,
-            pages.allSatisfy({ $0.parentID == imported.board.id }), Workspace.validHierarchy(boards),
+            pages.allSatisfy({ $0.parentID != nil }), Workspace.validHierarchy(boards),
             boards.allSatisfy({
-                $0.cards.allSatisfy(Self.valid) && $0.zoom.isFinite && (0.1...4).contains($0.zoom)
+                $0.cards.allSatisfy(Self.valid) && $0.validSections
+                    && Set($0.cards.map(\.id)).count == $0.cards.count && $0.zoom.isFinite
+                    && (0.1...4).contains($0.zoom)
                     && $0.offsetX.isFinite && $0.offsetY.isFinite
             })
         else { throw CocoaError(.fileReadCorruptFile) }
@@ -719,8 +779,14 @@ final class BoardStore {
             }
             return next
         }
+        let previous = workspace
         workspace.boards.append(contentsOf: copies)
-        if workspaceOverviewsEnabled { try enableWorkspaceOverviews() }
+        do {
+            if workspaceOverviewsEnabled { try enableWorkspaceOverviews() }
+        } catch {
+            workspace = previous
+            throw error
+        }
         activate(copies[0].id)
     }
 }

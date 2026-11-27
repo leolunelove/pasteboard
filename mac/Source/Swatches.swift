@@ -94,10 +94,11 @@ enum SwatchArtwork {
 }
 
 extension BoardStore {
-    @discardableResult func addSwatch(hex: String, at point: CGPoint) -> UUID? {
+    @discardableResult func addSwatch(hex: String, at point: CGPoint, insertionPoint: CGPoint? = nil) -> UUID?
+    {
         guard let hex = SwatchColor.normalized(hex) else { return nil }
         let card = Card(x: point.x, y: point.y, width: 220, height: 180, hex: hex)
-        replaceCards(board.cards + [card], name: "Add Colour Swatch")
+        replaceCards(board.cards + [card], name: "Add Colour Swatch", insertionPoint: insertionPoint)
         return card.id
     }
     @discardableResult func setSwatch(_ id: UUID, hex: String, boardID: UUID) -> Bool {

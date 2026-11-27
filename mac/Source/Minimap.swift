@@ -46,14 +46,17 @@ final class BoardMinimap: NSView {
     private var dragBoardID: UUID?
     private var grabOffset = CGPoint.zero
     private var extentCards: [Card] = []
+    private var extentSections: [BoardSection] = []
     private var contentBounds = CGRect.null
     private var artworkCards: [Card] = []
+    private var artworkSections: [BoardSection] = []
     private var artworkSelection = Set<UUID>()
     private var artworkGeometry: MinimapGeometry?
     private var artworkDark: Bool?
     private var fills: [(CGPath, CGColor)] = []
     private var normalOutline = CGMutablePath()
     private var selectedOutline = CGMutablePath()
+    private var sectionOutline = CGMutablePath()
     private(set) var artworkGeneration = 0
     override var isFlipped: Bool { true }
     var mapArea: CGRect {
@@ -68,9 +71,13 @@ final class BoardMinimap: NSView {
     var geometry: MinimapGeometry? {
         if dragBoardID == canvas.store.board.id, let dragGeometry { return dragGeometry }
         let cards = canvas.store.board.cards
-        if cards != extentCards {
-            contentBounds = cards.reduce(CGRect.null) { $0.union($1.rect) }
+        let sections = canvas.store.board.sections ?? []
+        if cards != extentCards || sections != extentSections {
+            contentBounds = sections.reduce(cards.reduce(CGRect.null) { $0.union($1.rect) }) {
+                $0.union(canvas.store.board.sectionBounds($1))
+            }
             extentCards = cards
+            extentSections = sections
         }
         return MinimapGeometry(contentBounds: contentBounds, viewport: viewport, area: mapArea)
     }
@@ -140,6 +147,13 @@ final class BoardMinimap: NSView {
         context.saveGState()
         context.clip(to: mapArea)
         updateArtwork(geometry)
+        context.addPath(sectionOutline)
+        context.setFillColor(NSColor.pasteboardAccent.withAlphaComponent(0.04).cgColor)
+        context.fillPath()
+        context.addPath(sectionOutline)
+        context.setStrokeColor(NSColor.pasteboardMuted.withAlphaComponent(0.5).cgColor)
+        context.setLineWidth(0.6)
+        context.strokePath()
         for (path, color) in fills {
             context.addPath(path)
             context.setFillColor(color)
@@ -167,12 +181,15 @@ final class BoardMinimap: NSView {
 
     private func updateArtwork(_ geometry: MinimapGeometry) {
         let cards = canvas.store.board.cards
+        let sections = canvas.store.board.sections ?? []
         let dark = effectiveAppearance.isPasteboardDark
         guard
-            artworkCards != cards || artworkSelection != canvas.selection || artworkGeometry != geometry
+            artworkCards != cards || artworkSections != sections || artworkSelection != canvas.selection
+                || artworkGeometry != geometry
                 || artworkDark != dark
         else { return }
         artworkCards = cards
+        artworkSections = sections
         artworkSelection = canvas.selection
         artworkGeometry = geometry
         artworkDark = dark
@@ -180,6 +197,10 @@ final class BoardMinimap: NSView {
         var paths: [String: (CGMutablePath, CGColor)] = [:]
         normalOutline = CGMutablePath()
         selectedOutline = CGMutablePath()
+        sectionOutline = CGMutablePath()
+        for section in sections {
+            sectionOutline.addRect(geometry.project(canvas.store.board.sectionBounds(section)))
+        }
         for card in cards {
             let raw = geometry.project(card.rect)
             let rect = CGRect(

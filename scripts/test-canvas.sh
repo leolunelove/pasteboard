@@ -7,6 +7,6 @@ TASK_FIXTURE="canvas"
 if [[ "${1:-}" == "--benchmark" ]]; then TASK_FIXTURE="performance"; fi
 xcrun swiftc -swift-version 5 -O -module-cache-path "${TMPDIR:-/tmp}/pasteboard-test-module-cache" \
   -framework AppKit -framework AVKit -framework AVFoundation -framework WebKit -framework UniformTypeIdentifiers \
-  "$PROJECT_ROOT"/mac/Source/{Brand,Arrangement,ImportIndicator,Model,Backups,Search,Cropping,BoardView,CanvasScene,Export,Snapping,PageTransfers,Swatches,SVGImages,SVGColours,DesignClipboard,WorkspaceOverview,SocialPosts,SocialPreview,Videos,VideoPlayer,Minimap}.swift \
+  "$PROJECT_ROOT"/mac/Source/{Brand,Arrangement,ImportIndicator,Model,Sections,Backups,Search,Cropping,BoardView,CanvasScene,Export,Snapping,PageTransfers,Swatches,SVGImages,SVGColours,DesignClipboard,WorkspaceOverview,SocialPosts,SocialPreview,Videos,VideoPlayer,Minimap}.swift \
   "$PROJECT_ROOT/tests/$TASK_FIXTURE/main.swift" -o "$TEST_DIRECTORY/check"
 "$TEST_DIRECTORY/check"

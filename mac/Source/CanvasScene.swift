@@ -74,6 +74,12 @@ final class CanvasScene {
     private var renderedSpacing: [SpacingGuide] = []
     private var renderedBackingScale: CGFloat = 0
     private var renderedDark: Bool?
+    private var renderedSections: [BoardSection] = []
+    private var sectionCards: [Card] = []
+    private var sectionFrames: [UUID: CGRect] = [:]
+    private var sectionOutlines: [UUID: CAShapeLayer] = [:]
+    private var sectionLabels: [UUID: CATextLayer] = [:]
+    private(set) var sectionGeneration = 0
     private var groupOutlines: [UUID: CAShapeLayer] = [:]
     private var groupLabels: [UUID: CATextLayer] = [:]
     private var groupGrips: [UUID: CAShapeLayer] = [:]
@@ -122,6 +128,19 @@ final class CanvasScene {
             root.position = offset
             if zoomChanged { root.setAffineTransform(CGAffineTransform(scaleX: zoom, y: zoom)) }
             let boardCards = store.board.cards
+            let sections = store.board.sections ?? []
+            let sectionsChanged = renderedSections != sections || sectionCards != boardCards
+            if sectionsChanged {
+                sectionFrames = Dictionary(
+                    uniqueKeysWithValues: sections.map {
+                        ($0.id, store.board.sectionBounds($0))
+                    })
+                renderedSections = sections
+                sectionCards = boardCards
+            }
+            if sectionsChanged || appearanceChanged || zoomChanged || renderedBackingScale != backingScale {
+                updateSections(sections, zoom: zoom, backingScale: backingScale)
+            }
             if renderedBoardCards != boardCards {
                 cachedLockedIDs = store.board.lockedIDs
                 cachedLockedGroups = Set(
@@ -415,6 +434,48 @@ final class CanvasScene {
         }
         guideLayer.path = path
         guideLayer.lineWidth = 1 / zoom
+    }
+    private func updateSections(_ sections: [BoardSection], zoom: CGFloat, backingScale: CGFloat) {
+        sectionGeneration += 1
+        let ids = Set(sections.map(\.id))
+        for id in Array(sectionOutlines.keys) where !ids.contains(id) {
+            sectionOutlines.removeValue(forKey: id)?.removeFromSuperlayer()
+            sectionLabels.removeValue(forKey: id)?.removeFromSuperlayer()
+        }
+        for section in sections {
+            guard let rect = sectionFrames[section.id] else { continue }
+            let outline: CAShapeLayer
+            let label: CATextLayer
+            if let existing = sectionOutlines[section.id], let existingLabel = sectionLabels[section.id] {
+                outline = existing
+                label = existingLabel
+            } else {
+                outline = CAShapeLayer()
+                outline.zPosition = -100
+                label = CATextLayer()
+                label.zPosition = -99
+                label.truncationMode = .end
+                label.isWrapped = false
+                root.addSublayer(outline)
+                root.addSublayer(label)
+                sectionOutlines[section.id] = outline
+                sectionLabels[section.id] = label
+            }
+            outline.path = CGPath(roundedRect: rect, cornerWidth: 12, cornerHeight: 12, transform: nil)
+            outline.fillColor = NSColor.pasteboardSurface.withAlphaComponent(0.7).cgColor
+            outline.strokeColor = NSColor.pasteboardBorder.cgColor
+            outline.lineWidth = 1 / zoom
+            label.frame = CGRect(
+                x: rect.minX + 2 / zoom, y: rect.minY - 24 / zoom,
+                width: max(1, rect.width - 4 / zoom), height: 21 / zoom)
+            label.contentsScale = backingScale * zoom
+            label.string = NSAttributedString(
+                string: section.name + "  ↗",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 12 / zoom, weight: .semibold),
+                    .foregroundColor: NSColor.pasteboardMuted.usingColorSpace(.sRGB)!,
+                ])
+        }
     }
     private func updateGroups(
         _ groups: [UUID: CGRect], locked: Set<UUID>, zoom: CGFloat, backingScale: CGFloat

@@ -69,7 +69,10 @@ extension BoardStore {
     }
     var allReadyPosts: [SocialPost] { readyPosts(in: nil) }
     func readyPosts(in rootID: UUID?) -> [SocialPost] {
-        workspace.boards.filter { rootID == nil || $0.id == rootID || $0.parentID == rootID }.flatMap {
+        let scoped = rootID.map { id in
+            Set([id] + workspace.descendants(of: id).map(\.id))
+        }
+        return workspace.boards.filter { scoped?.contains($0.id) ?? true }.flatMap {
             page -> [SocialPost] in
             let anchors = page.cards.filter { $0.socialPost?.isReady == true }
             guard !anchors.isEmpty else { return [] }

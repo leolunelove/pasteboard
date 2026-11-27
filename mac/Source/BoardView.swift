@@ -39,6 +39,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private let scene = CanvasScene()
     private let grid = BoardGrid()
     private(set) lazy var minimap = BoardMinimap(canvas: self)
+    private let sectionPicker = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let sectionOverview = NSButton(title: "Overview", target: nil, action: nil)
+    private var sectionMenuSnapshot: [BoardSection] = []
     var minimapEnabled = true { didSet { updateMinimap() } }
     private var tracking: NSTrackingArea?
     private var hoverPoint: CGPoint?
@@ -50,6 +53,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     private var pendingToggle: UUID?
     private var zoomTimer: Timer?
     private var zoomTarget: CGFloat?
+    private var sectionZoomTarget: UUID?
     private var pasteInFlight = 0
     private var pendingImageCount = 0
     private let importIndicator = ImportIndicator()
@@ -105,6 +109,22 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         )
         addSubview(minimap)
         addSubview(importIndicator)
+        sectionPicker.bezelStyle = .rounded
+        sectionPicker.font = .systemFont(ofSize: 12, weight: .medium)
+        sectionPicker.toolTip = "Jump to a named section · Option-Tab cycles sections"
+        sectionPicker.setAccessibilityLabel("Jump to section")
+        sectionOverview.bezelStyle = .rounded
+        sectionOverview.font = .systemFont(ofSize: 12, weight: .medium)
+        sectionOverview.target = self
+        sectionOverview.action = #selector(fitAll(_:))
+        sectionOverview.toolTip = "See every section (⌘0)"
+        sectionOverview.setAccessibilityLabel("Show all sections")
+        for control in [sectionPicker, sectionOverview] {
+            control.wantsLayer = true
+            control.layer?.zPosition = 10_000_000
+            addSubview(control)
+        }
+        updateSectionNavigation()
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -121,11 +141,15 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             x: max(12, bounds.width - 224), y: max(12, bounds.height - 174), width: 208, height: 158)
         importIndicator.frame = CGRect(
             x: max(12, bounds.midX - 100), y: 18, width: max(0, min(200, bounds.width - 24)), height: 38)
+        sectionPicker.frame = CGRect(x: 14, y: 10, width: 138, height: 32)
+        sectionOverview.frame = CGRect(x: 154, y: 10, width: 86, height: 32)
+        updateSectionNavigation()
         updateMinimap()
     }
     func updateMinimap() {
         minimap.isHidden =
-            !minimapEnabled || store.board.cards.isEmpty || isCropping || editor != nil || bounds.width < 300
+            !minimapEnabled || (store.board.cards.isEmpty && (store.board.sections ?? []).isEmpty)
+            || isCropping || editor != nil || bounds.width < 300
             || bounds.height < 230
         minimap.needsDisplay = true
     }
@@ -167,6 +191,78 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         onViewport?()
         onSelection?()
         updateMinimap()
+        updateSectionNavigation()
+    }
+
+    private func updateSectionNavigation() {
+        let sections = store.board.sections ?? []
+        let hidden = sections.isEmpty || isCropping || editor != nil || bounds.width < 300
+        sectionPicker.isHidden = hidden
+        sectionOverview.isHidden = hidden
+        sectionPicker.isEnabled = !hasPointerInteraction
+        sectionOverview.isEnabled = !hasPointerInteraction
+        guard sectionMenuSnapshot != sections else { return }
+        sectionMenuSnapshot = sections
+        sectionPicker.removeAllItems()
+        sectionPicker.addItem(withTitle: "Sections · \(sections.count)")
+        for section in sections {
+            let item = NSMenuItem(
+                title: section.name, action: #selector(jumpToSection(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = section.id.uuidString
+            sectionPicker.menu?.addItem(item)
+        }
+    }
+
+    // The title remains a readable screen-sized target at every board zoom.
+    func sectionHeaderRect(_ section: BoardSection) -> CGRect {
+        let rect = screen(store.board.sectionBounds(section))
+        return CGRect(x: rect.minX, y: rect.minY - 29, width: max(0, rect.width), height: 29)
+    }
+    private func sectionHeader(at point: CGPoint) -> BoardSection? {
+        guard !isCropping, hit(point) == nil else { return nil }
+        return (store.board.sections ?? []).reversed().first { sectionHeaderRect($0).contains(point) }
+    }
+    func zoomToSection(_ id: UUID) {
+        guard !hasPointerInteraction, !isCropping,
+            let section = store.board.sections?.first(where: { $0.id == id })
+        else { return }
+        finishEditing()
+        // A section jump establishes a new insertion location. A stale hover point
+        // from its old title position should not redirect the next paste elsewhere.
+        hoverPoint = nil
+        contextPoint = nil
+        fit(rect: store.board.sectionBounds(section))
+        sectionZoomTarget = id
+        store.status?("\(section.name) · Overview returns to all sections")
+    }
+    @objc private func jumpToSection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String, let id = UUID(uuidString: value) else {
+            return
+        }
+        zoomToSection(id)
+        window?.makeFirstResponder(self)
+    }
+    @objc private func renameSection(_ sender: NSMenuItem) {
+        guard !hasPointerInteraction, !isCropping, let window,
+            let value = sender.representedObject as? String, let id = UUID(uuidString: value),
+            let section = store.board.sections?.first(where: { $0.id == id })
+        else { return }
+        let boardID = store.board.id
+        let alert = NSAlert()
+        alert.messageText = "Rename section"
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(string: section.name)
+        field.frame = CGRect(x: 0, y: 0, width: 300, height: 26)
+        field.setAccessibilityLabel("Section name")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.store.renameSection(id, name: field.stringValue, boardID: boardID)
+            self?.refresh()
+        }
     }
 
     func world(_ p: CGPoint) -> CGPoint { CGPoint(x: (p.x - offset.x) / zoom, y: (p.y - offset.y) / zoom) }
@@ -221,6 +317,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         contextPoint = nil
         if spaceDown {
             NSCursor.openHand.set()
+        } else if sectionHeader(at: point) != nil {
+            NSCursor.pointingHand.set()
         } else if groupResize(at: point) != nil {
             NSCursor.crosshair.set()
         } else if selection.count == 1,
@@ -241,13 +339,14 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func draw(_ dirtyRect: NSRect) {
         updateMinimap()
+        updateSectionNavigation()
         NSColor.pasteboardCanvas.setFill()
         bounds.fill()
         let spacing = 24 * zoom * (zoom < 0.4 ? 4 : (zoom < 0.7 ? 2 : 1))
         if let context = NSGraphicsContext.current?.cgContext {
             grid.draw(in: context, bounds: bounds, spacing: spacing, offset: offset)
         }
-        if store.board.cards.isEmpty { drawWelcome() }
+        if store.board.cards.isEmpty && (store.board.sections ?? []).isEmpty { drawWelcome() }
         let visible = CGRect(
             origin: world(.zero), size: CGSize(width: bounds.width / zoom, height: bounds.height / zoom)
         ).insetBy(dx: -200 / zoom, dy: -200 / zoom)
@@ -347,6 +446,10 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             resizing = selected.id
             return
         }
+        if let section = sectionHeader(at: point) {
+            zoomToSection(section.id)
+            return
+        }
         if let card = hit(point) {
             if event.clickCount == 2, card.hex != nil, card.rect.contains(world(point)) {
                 showSwatchEditor(card: card)
@@ -392,10 +495,16 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 $0.rect.intersects(nearby)
             }
         } else if event.clickCount == 2 {
-            addNote(at: world(point))
+            if let section = (store.board.sections ?? []).reversed().first(where: {
+                store.board.sectionBounds($0).contains(world(point))
+            }) {
+                zoomToSection(section.id)
+            } else {
+                addNote(at: world(point))
+            }
             return
         } else {
-            if store.board.cards.isEmpty {
+            if store.board.cards.isEmpty && (store.board.sections ?? []).isEmpty {
                 let pill = CGRect(x: bounds.midX - 113, y: bounds.midY + 56, width: 226, height: 42)
                 if pill.contains(point) {
                     paste(nil)
@@ -676,6 +785,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         zoomTimer?.invalidate()
         zoomTimer = nil
         zoomTarget = nil
+        sectionZoomTarget = nil
     }
     func animateZoom(to value: CGFloat, anchor: CGPoint? = nil) {
         let anchor = anchor ?? CGPoint(x: bounds.midX, y: bounds.midY)
@@ -720,7 +830,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
     }
     @objc func fitAll(_ sender: Any?) {
         finishEditing()
-        fit(store.board.cards)
+        let content = store.board.cards.reduce(CGRect.null) { $0.union($1.rect) }
+        let rect = (store.board.sections ?? []).reduce(content) { $0.union(store.board.sectionBounds($1)) }
+        if rect.isNull { fit([]) } else { fit(rect: rect) }
     }
     @objc func fitSelection(_ sender: Any?) {
         finishEditing()
@@ -733,6 +845,10 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             return
         }
         let rect = cards.dropFirst().reduce(first.rect) { $0.union($1.rect) }
+        fit(rect: rect)
+    }
+    private func fit(rect: CGRect) {
+        guard !hasPointerInteraction, rect.width > 0, rect.height > 0 else { return }
         let target = min(
             1.5, max(0.1, min((bounds.width - 130) / rect.width, (bounds.height - 130) / rect.height)))
         animateViewport(
@@ -745,13 +861,15 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             onRequestPage?()
             guard !store.showsWorkspaceOverview else { return }
         }
-        addNote(at: placement(for: CGSize(width: 300, height: 180), near: insertionPoint()))
+        let point = insertionPoint()
+        addNote(at: placement(for: CGSize(width: 300, height: 180), near: point), insertionPoint: point)
     }
-    func addNote(at point: CGPoint) {
+    func addNote(at point: CGPoint, insertionPoint requestedPoint: CGPoint? = nil) {
         cancelCropping(nil)
         finishEditing()
         let card = Card(x: point.x, y: point.y, width: 300, height: 180, text: "")
-        store.replaceCards(store.board.cards + [card], name: "Add Note")
+        store.replaceCards(
+            store.board.cards + [card], name: "Add Note", insertionPoint: requestedPoint ?? point)
         selection = [card.id]
         startEditing(card.id)
         editingWasNew = true
@@ -852,6 +970,22 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
 
     override func keyDown(with event: NSEvent) {
         if hasPointerInteraction && event.keyCode != 53 { return }
+        if event.keyCode == 48, event.modifierFlags.contains(.option),
+            event.modifierFlags.intersection([.command, .control]).isEmpty, !isCropping,
+            let sections = store.board.sections, !sections.isEmpty
+        {
+            let nearest =
+                (zoomTarget == nil ? nil : sections.firstIndex(where: { $0.id == sectionZoomTarget }))
+                ?? sections.enumerated().min { lhs, rhs in
+                    let a = store.board.sectionBounds(lhs.element)
+                    let b = store.board.sectionBounds(rhs.element)
+                    return hypot(a.midX - worldCenter.x, a.midY - worldCenter.y)
+                        < hypot(b.midX - worldCenter.x, b.midY - worldCenter.y)
+                }?.offset ?? 0
+            let step = event.modifierFlags.contains(.shift) ? -1 : 1
+            zoomToSection(sections[(nearest + step + sections.count) % sections.count].id)
+            return
+        }
         if event.keyCode == 48, event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             cycleBoardFocus(backwards: event.modifierFlags.contains(.shift))
             return
@@ -1180,12 +1314,14 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             cards.allSatisfy(BoardStore.valid),
             cards.allSatisfy({ $0.assetNames.allSatisfy(store.hasAsset) })
         else { return false }
-        append(place(Card.copies(of: cards), near: point, avoidOverlap: true, preserveLayout: true))
+        append(
+            place(Card.copies(of: cards), near: point, avoidOverlap: true, preserveLayout: true),
+            insertionPoint: point)
         return true
     }
-    func append(_ cards: [Card], reveal: Bool = true) {
+    func append(_ cards: [Card], reveal: Bool = true, insertionPoint: CGPoint? = nil) {
         guard !cards.isEmpty else { return }
-        store.replaceCards(store.board.cards + cards, name: "Add to Board")
+        store.replaceCards(store.board.cards + cards, name: "Add to Board", insertionPoint: insertionPoint)
         if editingID == nil { selection = Set(cards.map(\.id)) }
         needsDisplay = true
         onSelection?()
@@ -1282,7 +1418,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         let cards = prepared.map { store.card(for: $0, at: .zero) }
         // A paste belongs to the board where it began, even if the user switches.
         if store.board.id == boardID {
-            append(place(cards, near: point, avoidOverlap: avoidOverlap))
+            append(place(cards, near: point, avoidOverlap: avoidOverlap), insertionPoint: point)
         } else if let index = store.workspace.boards.firstIndex(where: { $0.id == boardID }) {
             var placed = cards
             var occupied = store.workspace.boards[index].cards
@@ -1292,8 +1428,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 placed[i].y = origin.y
                 occupied.append(placed[i])
             }
-            store.workspace.boards[index].cards = occupied
-            store.scheduleSave()
+            store.replaceCards(occupied, name: "Add to Board", boardID: boardID, insertionPoint: point)
         }
         if failed > 0 { store.status?(message ?? "Some images couldn’t be opened") }
     }
@@ -1352,7 +1487,9 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             pb.string(forType: .init("public.url")) ?? pb.string(forType: .string) ?? "")
         {
             do {
-                append(place([try store.youtubeCard(video)], near: point, avoidOverlap: avoidOverlap))
+                append(
+                    place([try store.youtubeCard(video)], near: point, avoidOverlap: avoidOverlap),
+                    insertionPoint: point)
             } catch { showError(error) }
             return true
         }
@@ -1376,7 +1513,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
             var card = textCard(text)
             let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
             card.sourceURL = SourceLink.clipboard(pb) ?? SourceLink.url(clean)?.absoluteString
-            append(place([card], near: point, avoidOverlap: avoidOverlap))
+            append(place([card], near: point, avoidOverlap: avoidOverlap), insertionPoint: point)
             return true
         }
         return false
@@ -1410,7 +1547,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 }
             } catch { showError(error) }
         }
-        append(place(cards, near: point, avoidOverlap: avoidOverlap))
+        append(place(cards, near: point, avoidOverlap: avoidOverlap), insertionPoint: point)
         importVideoFiles(movies, at: point, avoidOverlap: avoidOverlap)
         importImageData(images, at: point, avoidOverlap: avoidOverlap, sources: sources)
         if unsupported > 0 { store.status?("Use images, videos, SVG, .txt, .md, or .gatherboard files") }
@@ -1461,7 +1598,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                     importIndicator.show(count: pendingImageCount)
                     let cards = prepared.map { self.store.videoCard($0) }
                     if store.board.id == boardID {
-                        append(place(cards, near: point, avoidOverlap: avoidOverlap))
+                        append(place(cards, near: point, avoidOverlap: avoidOverlap), insertionPoint: point)
                     } else if let index = store.workspace.boards.firstIndex(where: { $0.id == boardID }) {
                         var occupied = store.workspace.boards[index].cards
                         for var card in cards {
@@ -1470,7 +1607,8 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                             card.y = origin.y
                             occupied.append(card)
                         }
-                        store.replaceCards(occupied, name: "Add Videos", boardID: boardID)
+                        store.replaceCards(
+                            occupied, name: "Add Videos", boardID: boardID, insertionPoint: point)
                     }
                     if let error = errors.first { store.status?(error) }
                 }
@@ -1512,6 +1650,20 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
         }
         onSelection?()
         let menu = NSMenu()
+        if let section = sectionHeader(at: point) {
+            for (title, action) in [
+                ("Zoom to Section", #selector(jumpToSection(_:))),
+                ("Rename Section…", #selector(renameSection(_:))),
+            ] {
+                let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+                item.target = self
+                item.representedObject = section.id.uuidString
+            }
+            let item = menu.addItem(
+                withTitle: "Show All Sections", action: #selector(fitAll(_:)), keyEquivalent: "")
+            item.target = self
+            return menu
+        }
         if !selection.isEmpty {
             if selectedVideo != nil {
                 let play = menu.addItem(
@@ -1673,7 +1825,7 @@ final class BoardView: NSView, NSTextViewDelegate, NSMenuItemValidation {
                 _ = self.store.setSwatch(card.id, hex: hex, boardID: boardID)
             } else if self.store.board.id == boardID {
                 let origin = self.placement(for: CGSize(width: 220, height: 180), near: point)
-                if let id = self.store.addSwatch(hex: hex, at: origin) {
+                if let id = self.store.addSwatch(hex: hex, at: origin, insertionPoint: point) {
                     self.selection = [id]
                     self.needsDisplay = true
                     self.onSelection?()
