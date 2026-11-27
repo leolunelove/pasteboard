@@ -1,7 +1,7 @@
 {
-  "version": "0.21.1",
-  "build": 25,
-  "bytes": 1720706,
-  "download": "https://github.com/leolunelove/pasteboard/releases/download/v0.21.1/Pasteboard-Mac.zip",
-  "sha256": "b90fc29d84228c85ea9ba158f3da43b4ee95944d721688554272c3f1c8c78f01"
+  "version": "0.22.0",
+  "build": 26,
+  "bytes": 1795861,
+  "download": "https://github.com/leolunelove/pasteboard/releases/download/v0.22.0/Pasteboard-Mac.zip",
+  "sha256": "846539f56a4ba65d42a51aa933fa1b0154805082c8b846c4aacf5185c29a0730"
 }
